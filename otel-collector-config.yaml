@@ -1,0 +1,39 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+
+exporters:
+  # When SigNoz is running (via docker-compose.signoz.yml),
+  # traces/metrics/logs go to ClickHouse via SigNoz's pipeline.
+  # When SigNoz is NOT running, the collector still accepts data
+  # but drops it gracefully (prevents app errors).
+  otlp/signoz:
+    endpoint: signoz-otel-collector:4317
+    tls:
+      insecure: true
+  logging:
+    loglevel: warn
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/signoz, logging]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/signoz, logging]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/signoz, logging]

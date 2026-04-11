@@ -1,0 +1,141 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Vantroxia-Labs/infra — Deploy Pipeline
+# Triggers:
+#   - repository_dispatch from remit/admin CI pipelines (automatic)
+#   - workflow_dispatch for manual deployments
+# Steps: SSH to VPS → pull latest images → restart services
+# ═══════════════════════════════════════════════════════════════════════════
+name: Deploy
+
+on:
+  # Triggered automatically by remit/admin CI pipelines
+  repository_dispatch:
+    types: [deploy]
+
+  # Manual trigger with optional service selector
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - api
+          - worker
+          - admin
+      image_tag:
+        description: 'Image tag (default: latest)'
+        required: false
+        default: 'latest'
+
+env:
+  DEPLOY_DIR: /opt/aegisremit
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine what to deploy
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            SERVICE="${{ github.event.client_payload.service }}"
+            TAG="${{ github.event.client_payload.image_tag }}"
+            TRIGGERED_BY="${{ github.event.client_payload.triggered_by }}"
+            COMMIT="${{ github.event.client_payload.commit_sha }}"
+          else
+            SERVICE="${{ inputs.service }}"
+            TAG="${{ inputs.image_tag }}"
+            TRIGGERED_BY="manual"
+            COMMIT="manual"
+          fi
+          echo "service=$SERVICE" >> $GITHUB_OUTPUT
+          echo "tag=${TAG:-latest}" >> $GITHUB_OUTPUT
+          echo "triggered_by=$TRIGGERED_BY" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "Deploying service=$SERVICE tag=$TAG triggered_by=$TRIGGERED_BY"
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ${{ env.DEPLOY_DIR }}
+
+            # Log in to GitHub Container Registry
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            SERVICE="${{ steps.target.outputs.service }}"
+            TAG="${{ steps.target.outputs.tag }}"
+
+            echo "═══════════════════════════════════════════"
+            echo "  Deploying: $SERVICE (tag: $TAG)"
+            echo "  Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "═══════════════════════════════════════════"
+
+            deploy_service() {
+              local svc=$1
+              echo "→ Pulling $svc..."
+              docker compose pull "$svc"
+              echo "→ Restarting $svc..."
+              docker compose up -d --no-deps "$svc"
+              echo "→ Waiting for $svc health..."
+              sleep 5
+              docker compose ps "$svc"
+            }
+
+            case "$SERVICE" in
+              api)
+                export IMAGE_TAG="$TAG"
+                deploy_service api
+                ;;
+              worker)
+                export IMAGE_TAG="$TAG"
+                deploy_service worker
+                ;;
+              admin)
+                deploy_service admin
+                ;;
+              all)
+                export IMAGE_TAG="$TAG"
+                echo "→ Pulling all images..."
+                docker compose pull api worker admin
+                echo "→ Restarting application services..."
+                docker compose up -d --no-deps api worker admin
+                sleep 5
+                docker compose ps
+                ;;
+            esac
+
+            # Cleanup old images
+            docker image prune -f
+
+            echo "═══════════════════════════════════════════"
+            echo "  Deploy complete!"
+            echo "═══════════════════════════════════════════"
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "── Health checks ──"
+            curl -sf https://api.aegisremit.ng/health && echo " ✓ API healthy" || echo " ✗ API unhealthy"
+            curl -sf https://app.aegisremit.ng && echo " ✓ Admin healthy" || echo " ✗ Admin unhealthy"
+            echo ""
+            echo "── Running containers ──"
+            cd /opt/aegisremit && docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+
+      # TODO: Add Slack/Discord notification on success/failure

@@ -1,0 +1,35 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# AegisRemit Worker — Multi-stage Dockerfile
+# Place at: Vantroxia-Labs/remit/src/AegisRemit.SFTPBackgroundService/Dockerfile
+# Build context: repository root
+# ═══════════════════════════════════════════════════════════════════════════
+
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+WORKDIR /src
+
+COPY *.sln ./
+COPY src/AegisRemit.Domain/*.csproj src/AegisRemit.Domain/
+COPY src/AegisRemit.Application/*.csproj src/AegisRemit.Application/
+COPY src/AegisRemit.Infrastructure/*.csproj src/AegisRemit.Infrastructure/
+COPY src/AegisRemit.Persistence/*.csproj src/AegisRemit.Persistence/
+COPY src/AegisRemit.SFTPBackgroundService/*.csproj src/AegisRemit.SFTPBackgroundService/
+COPY src/AegisRemit.FIRSAccessPoint/*.csproj src/AegisRemit.FIRSAccessPoint/
+COPY src/AegisRemit.Interswitch/*.csproj src/AegisRemit.Interswitch/
+
+RUN dotnet restore src/AegisRemit.SFTPBackgroundService/AegisRemit.SFTPBackgroundService.csproj
+
+COPY . .
+RUN dotnet publish src/AegisRemit.SFTPBackgroundService/AegisRemit.SFTPBackgroundService.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS runtime
+WORKDIR /app
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+COPY --from=build /app/publish .
+
+ENTRYPOINT ["dotnet", "AegisRemit.SFTPBackgroundService.dll"]

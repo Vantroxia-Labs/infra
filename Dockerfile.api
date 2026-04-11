@@ -1,0 +1,47 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# AegisRemit API — Multi-stage Dockerfile
+# Place at: Vantroxia-Labs/remit/src/AegisRemit.API/Dockerfile
+# Build context: repository root (so all projects are accessible)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: Build ─────────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+WORKDIR /src
+
+# Copy solution and project files first (layer caching)
+COPY *.sln ./
+COPY src/AegisRemit.Domain/*.csproj src/AegisRemit.Domain/
+COPY src/AegisRemit.Application/*.csproj src/AegisRemit.Application/
+COPY src/AegisRemit.Infrastructure/*.csproj src/AegisRemit.Infrastructure/
+COPY src/AegisRemit.Persistence/*.csproj src/AegisRemit.Persistence/
+COPY src/AegisRemit.API/*.csproj src/AegisRemit.API/
+COPY src/AegisRemit.SaaS.API/*.csproj src/AegisRemit.SaaS.API/
+COPY src/AegisRemit.FIRSAccessPoint/*.csproj src/AegisRemit.FIRSAccessPoint/
+COPY src/AegisRemit.Interswitch/*.csproj src/AegisRemit.Interswitch/
+
+RUN dotnet restore src/AegisRemit.API/AegisRemit.API.csproj
+
+# Copy everything and build
+COPY . .
+RUN dotnet publish src/AegisRemit.API/AegisRemit.API.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore
+
+# ── Stage 2: Runtime ───────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS runtime
+WORKDIR /app
+
+# Security: run as non-root
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+COPY --from=build /app/publish .
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+    CMD wget -qO- http://localhost:8080/health || exit 1
+
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "AegisRemit.API.dll"]

@@ -1,0 +1,22 @@
+# Environment files (contain secrets)
+.env
+*.env.local
+
+# SSH keys
+deploy_key
+deploy_key.pub
+*.pem
+
+# Backups
+*.sql
+*.dump
+*.gz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

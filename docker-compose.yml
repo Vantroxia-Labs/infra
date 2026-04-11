@@ -1,0 +1,295 @@
+##############################################################################
+# AegisRemit — Production Docker Compose
+# Target: Contabo Cloud VPS 10 (4 vCPU / 8GB RAM / 75GB NVMe)
+# Region: Singapore
+# Domain: aegisremit.ng (via Cloudflare DNS)
+##############################################################################
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # REVERSE PROXY — Traefik v3
+  # ═══════════════════════════════════════════════════════════════════════════
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedByDefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # HTTP -> HTTPS redirect
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # Let's Encrypt via Cloudflare DNS challenge
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # Access log
+      - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik/access.log
+      # Metrics for SigNoz
+      - --metrics.openTelemetry=true
+      - --metrics.openTelemetry.address=otel-collector:4318
+      - --metrics.openTelemetry.insecure=true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+      - traefik-logs:/var/log/traefik
+    networks:
+      - web
+      - internal
+    labels:
+      # Traefik dashboard at traefik.aegisremit.ng (protected by BasicAuth)
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN}`)
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.tls.certresolver=letsencrypt
+      - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.routers.dashboard.middlewares=auth
+      - traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # APPLICATION — .NET 9 API (SaaS.API + EInvoiceIntegrator.API combined)
+  # ═══════════════════════════════════════════════════════════════════════════
+  api:
+    image: ghcr.io/vantroxia-labs/remit-api:${IMAGE_TAG:-latest}
+    container_name: aegisremit-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=aegisremit;Username=${PG_USER};Password=${PG_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=aegisremit-api
+    networks:
+      - web
+      - internal
+    labels:
+      - traefik.enable=true
+      # API routes
+      - traefik.http.routers.api.rule=Host(`api.${DOMAIN}`)
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls.certresolver=letsencrypt
+      - traefik.http.services.api.loadbalancer.server.port=8080
+      # Rate limiting
+      - traefik.http.routers.api.middlewares=api-ratelimit
+      - traefik.http.middlewares.api-ratelimit.ratelimit.average=100
+      - traefik.http.middlewares.api-ratelimit.ratelimit.burst=50
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BACKGROUND WORKER — SFTP + Quartz jobs
+  # ═══════════════════════════════════════════════════════════════════════════
+  worker:
+    image: ghcr.io/vantroxia-labs/remit-worker:${IMAGE_TAG:-latest}
+    container_name: aegisremit-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=aegisremit;Username=${PG_USER};Password=${PG_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=aegisremit-worker
+    networks:
+      - internal
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ADMIN PORTAL — React/TypeScript frontend
+  # ═══════════════════════════════════════════════════════════════════════════
+  admin:
+    image: ghcr.io/vantroxia-labs/remit-admin:${IMAGE_TAG:-latest}
+    container_name: aegisremit-admin
+    restart: unless-stopped
+    networks:
+      - web
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.admin.rule=Host(`app.${DOMAIN}`)
+      - traefik.http.routers.admin.entrypoints=websecure
+      - traefik.http.routers.admin.tls.certresolver=letsencrypt
+      - traefik.http.services.admin.loadbalancer.server.port=80
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DATABASE — PostgreSQL 16
+  # ═══════════════════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: aegisremit-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=aegisremit
+      - POSTGRES_USER=${PG_USER}
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d aegisremit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Memory tuning for shared 8GB box
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_connections=100
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CACHE — Redis 7
+  # ═══════════════════════════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: aegisremit-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MESSAGE BROKER — RabbitMQ 3.13
+  # ═══════════════════════════════════════════════════════════════════════════
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: aegisremit-rabbitmq
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - internal
+      - web
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      # Management UI at rabbitmq.aegisremit.ng (BasicAuth protected)
+      - traefik.enable=true
+      - traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.${DOMAIN}`)
+      - traefik.http.routers.rabbitmq.entrypoints=websecure
+      - traefik.http.routers.rabbitmq.tls.certresolver=letsencrypt
+      - traefik.http.routers.rabbitmq.middlewares=auth
+      - traefik.http.services.rabbitmq.loadbalancer.server.port=15672
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # OBSERVABILITY — SigNoz (OpenTelemetry Collector + ClickHouse + UI)
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SigNoz is deployed via its own compose file, included here as an override.
+  # Run: docker compose -f docker-compose.yml -f docker-compose.signoz.yml up -d
+  #
+  # We include only the OTEL collector inline so the app services can ship
+  # traces/metrics without depending on the full SigNoz stack being up.
+  # ═══════════════════════════════════════════════════════════════════════════
+  otel-collector:
+    image: signoz/signoz-otel-collector:0.102.12
+    container_name: aegisremit-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    networks:
+      - internal
+      - web
+    labels:
+      - traefik.enable=false
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BACKUP — Automated PostgreSQL backups
+  # ═══════════════════════════════════════════════════════════════════════════
+  pg-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: aegisremit-pg-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=aegisremit
+      - POSTGRES_USER=${PG_USER}
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
+      - SCHEDULE=@daily
+      - BACKUP_NUM_KEEP=7
+      - BACKUP_DIR=/backups
+    volumes:
+      - pg-backups:/backups
+    networks:
+      - internal
+
+# ═════════════════════════════════════════════════════════════════════════════
+# NETWORKS
+# ═════════════════════════════════════════════════════════════════════════════
+networks:
+  web:
+    name: aegisremit-web
+  internal:
+    name: aegisremit-internal
+    internal: true   # No external access — services talk only via Traefik
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VOLUMES
+# ═════════════════════════════════════════════════════════════════════════════
+volumes:
+  pg-data:
+  pg-backups:
+  redis-data:
+  rabbitmq-data:
+  traefik-certs:
+  traefik-logs:
