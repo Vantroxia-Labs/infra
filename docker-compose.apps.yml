@@ -1,0 +1,237 @@
+##############################################################################
+# AegisRemit — Application / Domain Services (docker-compose.apps.yml)
+# Requires infrastructure from docker-compose.yml to be running first.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d
+##############################################################################
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # APPLICATION — Portal API (.NET 10)
+  # Main frontend-facing API (multi-tenant SaaS portal)
+  # ═══════════════════════════════════════════════════════════════════════════
+  portal-api:
+    image: ghcr.io/vantroxia-labs/remit-portal-api:${IMAGE_TAG:-latest}
+    container_name: aegisremit-portal-api
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_ROOT_USER}
+      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
+      - MinIO__UseSSL=false
+      # JWT
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      # Payload encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__Iv=${ENCRYPTION_IV}
+      # CORS — override first 3 entries of the appsettings.json array with production origins
+      - Cors__AllowedOrigins__0=https://${DOMAIN}
+      - Cors__AllowedOrigins__1=https://www.${DOMAIN}
+      - Cors__AllowedOrigins__2=https://app.${DOMAIN}
+      # Observability
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=aegisremit-portal-api
+    networks:
+      - web
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.portal-api.rule=Host(`api.${DOMAIN}`)
+      - traefik.http.routers.portal-api.entrypoints=websecure
+      - traefik.http.routers.portal-api.tls.certresolver=letsencrypt
+      - traefik.http.services.portal-api.loadbalancer.server.port=8080
+      # Rate limiting
+      - traefik.http.routers.portal-api.middlewares=api-ratelimit
+      - traefik.http.middlewares.api-ratelimit.ratelimit.average=100
+      - traefik.http.middlewares.api-ratelimit.ratelimit.burst=50
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # APPLICATION — ERP API (.NET 10)
+  # Enterprise Resource Planning integration API
+  # ═══════════════════════════════════════════════════════════════════════════
+  erp-api:
+    image: ghcr.io/vantroxia-labs/remit-erp-api:${IMAGE_TAG:-latest}
+    container_name: aegisremit-erp-api
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_ROOT_USER}
+      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
+      - MinIO__UseSSL=false
+      # JWT
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      # Payload encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__Iv=${ENCRYPTION_IV}
+      # CORS
+      - Cors__AllowedOrigins__0=https://${DOMAIN}
+      - Cors__AllowedOrigins__1=https://www.${DOMAIN}
+      - Cors__AllowedOrigins__2=https://app.${DOMAIN}
+      # Observability
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=aegisremit-erp-api
+    networks:
+      - web
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.erp-api.rule=Host(`erp.${DOMAIN}`)
+      - traefik.http.routers.erp-api.entrypoints=websecure
+      - traefik.http.routers.erp-api.tls.certresolver=letsencrypt
+      - traefik.http.services.erp-api.loadbalancer.server.port=8080
+      # Rate limiting
+      - traefik.http.routers.erp-api.middlewares=erp-ratelimit
+      - traefik.http.middlewares.erp-ratelimit.ratelimit.average=100
+      - traefik.http.middlewares.erp-ratelimit.ratelimit.burst=50
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # APPLICATION — SFTP API (.NET 10)
+  # File processing & SFTP integration API
+  # Shares sftp-data volume with SFTPGo (infrastructure service)
+  # ═══════════════════════════════════════════════════════════════════════════
+  sftp-api:
+    image: ghcr.io/vantroxia-labs/remit-sftp-api:${IMAGE_TAG:-latest}
+    container_name: aegisremit-sftp-api
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_ROOT_USER}
+      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
+      - MinIO__UseSSL=false
+      # JWT
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      # Payload encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__Iv=${ENCRYPTION_IV}
+      # SFTPGo shared data directory (same volume as SFTPGo uses)
+      - SftpConfiguration__FtpRootPath=/srv/sftpgo/data
+      # SFTPGo REST API — user management via SftpGoAdminService
+      - SftpGo__AdminApiUrl=http://sftpgo:8080
+      - SftpGo__ApiKey=${SFTPGO_API_KEY}
+      # Observability
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=aegisremit-sftp-api
+    networks:
+      - web
+      - internal
+    volumes:
+      - sftp-data:/srv/sftpgo/data
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.sftp-api.rule=Host(`sftp-api.${DOMAIN}`)
+      - traefik.http.routers.sftp-api.entrypoints=websecure
+      - traefik.http.routers.sftp-api.tls.certresolver=letsencrypt
+      - traefik.http.services.sftp-api.loadbalancer.server.port=8080
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ADMIN PORTAL — React/TypeScript frontend (+ landing pages)
+  # ═══════════════════════════════════════════════════════════════════════════
+  admin:
+    image: ghcr.io/vantroxia-labs/remit-admin:${IMAGE_TAG:-latest}
+    container_name: aegisremit-admin
+    restart: unless-stopped
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    labels:
+      - traefik.enable=true
+      # app.aegisremit.ng + aegisremit.ng + www.aegisremit.ng
+      - traefik.http.routers.admin.rule=Host(`app.${DOMAIN}`) || Host(`${DOMAIN}`) || Host(`www.${DOMAIN}`)
+      - traefik.http.routers.admin.entrypoints=websecure
+      - traefik.http.routers.admin.tls.certresolver=letsencrypt
+      - traefik.http.services.admin.loadbalancer.server.port=80
+
+# ═════════════════════════════════════════════════════════════════════════════
+# NETWORKS — reference networks created by docker-compose.yml
+# ═════════════════════════════════════════════════════════════════════════════
+networks:
+  web:
+    name: aegisremit-web
+    external: true
+  internal:
+    name: aegisremit-internal
+    external: true
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VOLUMES — reference volumes created by docker-compose.yml
+# ═════════════════════════════════════════════════════════════════════════════
+volumes:
+  sftp-data:
+    external: true

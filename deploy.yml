@@ -74,6 +74,9 @@ jobs:
             set -euo pipefail
             cd ${{ env.DEPLOY_DIR }}
 
+            # Compose file references
+            APPS="-f docker-compose.yml -f docker-compose.apps.yml"
+
             # Log in to GitHub Container Registry
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
@@ -88,12 +91,12 @@ jobs:
             deploy_service() {
               local svc=$1
               echo "→ Pulling $svc..."
-              docker compose pull "$svc"
+              docker compose $APPS pull "$svc"
               echo "→ Restarting $svc..."
-              docker compose up -d --no-deps "$svc"
+              docker compose $APPS up -d --no-deps "$svc"
               echo "→ Waiting for $svc health..."
               sleep 5
-              docker compose ps "$svc"
+              docker compose $APPS ps "$svc"
             }
 
             export IMAGE_TAG="$TAG"
@@ -113,19 +116,19 @@ jobs:
                 ;;
               all-apis)
                 echo "→ Pulling all API images..."
-                docker compose pull portal-api erp-api sftp-api
+                docker compose $APPS pull portal-api erp-api sftp-api
                 echo "→ Restarting all APIs..."
-                docker compose up -d --no-deps portal-api erp-api sftp-api
+                docker compose $APPS up -d --no-deps portal-api erp-api sftp-api
                 sleep 5
-                docker compose ps
+                docker compose $APPS ps
                 ;;
               all)
-                echo "→ Pulling all images..."
-                docker compose pull portal-api erp-api sftp-api admin
+                echo "→ Pulling all application images..."
+                docker compose $APPS pull portal-api erp-api sftp-api admin
                 echo "→ Restarting application services..."
-                docker compose up -d --no-deps portal-api erp-api sftp-api admin
+                docker compose $APPS up -d --no-deps portal-api erp-api sftp-api admin
                 sleep 5
-                docker compose ps
+                docker compose $APPS ps
                 ;;
             esac
 
@@ -150,6 +153,6 @@ jobs:
             curl -sf https://app.aegisremit.ng && echo " ✓ Admin healthy" || echo " ✗ Admin unhealthy"
             echo ""
             echo "── Running containers ──"
-            cd /opt/aegisremit && docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+            cd /opt/aegisremit && docker compose -f docker-compose.yml -f docker-compose.apps.yml ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 
       # TODO: Add Slack/Discord notification on success/failure
