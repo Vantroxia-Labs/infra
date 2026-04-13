@@ -12,8 +12,10 @@ RUN npm ci
 
 COPY . .
 
-ARG VITE_API_URL=https://api.aegisremit.ng
-ENV VITE_API_URL=$VITE_API_URL
+ARG VITE_API_BASE_URL=https://api.aegisremit.ng/api/v1
+ARG VITE_USE_MOCK=false
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_USE_MOCK=$VITE_USE_MOCK
 
 RUN npm run build
 

@@ -123,17 +123,19 @@ Click "Add record" for each row below:
 | # | Type  | Name       | Content        | Proxy  |
 |---|-------|------------|----------------|--------|
 | 1 | A     | @          | 207.180.197.64 | Off    |
-| 2 | A     | api        | 207.180.197.64 | On     |
-| 3 | A     | app        | 207.180.197.64 | On     |
-| 4 | A     | erp        | 207.180.197.64 | On     |
+| 2 | A     | app        | 207.180.197.64 | Off    |
+| 3 | A     | api        | 207.180.197.64 | Off    |
+| 4 | A     | erp        | 207.180.197.64 | Off    |
 | 5 | A     | sftp-api   | 207.180.197.64 | Off    |
 | 6 | A     | traefik    | 207.180.197.64 | Off    |
 | 7 | A     | rabbitmq   | 207.180.197.64 | Off    |
 | 8 | A     | minio      | 207.180.197.64 | Off    |
-| 9 | CNAME | www        | aegisremit.ng  | On     |
+| 9 | CNAME | www        | aegisremit.ng  | Off    |
 
 Proxy "On" = orange cloud icon.
 Proxy "Off" = gray cloud icon.
+
+**Start with all records grey (Proxy Off)** for the first deploy — Traefik's Let's Encrypt DNS challenge works regardless, and orange cloud in front of Traefik can interfere with websockets, long uploads, and cert issuance troubleshooting. Once the stack is stable, you can flip `@`, `www`, and `app` to orange for CDN caching on the marketing pages.
 
 ✅ 9 records total when done.
 
@@ -162,6 +164,23 @@ Save it somewhere safe temporarily. We'll use it in Step 3.3.
 ---
 
 ## PHASE 3: VPS DEPLOYMENT
+
+### Step 3.0 — VPS bootstrap (skip if already done)
+
+If you started from a fresh Ubuntu 24.04 image, run the idempotent bootstrap script first. It installs Docker, creates the `deploy` user with your CI public key, hardens sshd, configures ufw (22/80/443), enables fail2ban + unattended-upgrades, creates `/opt/aegisremit`, the `aegisremit-web` docker network, and a 2 GB swap file.
+
+```bash
+# Upload the script to the VPS (from your Windows machine)
+scp Infra/scripts/bootstrap-vps.sh root@207.180.197.64:/tmp/
+
+# SSH as root and run it with your CI public key as the argument
+ssh root@207.180.197.64
+bash /tmp/bootstrap-vps.sh "ssh-ed25519 AAAA...your-ci-public-key"
+```
+
+The script is safe to re-run — it detects existing Docker, deploy user, swap, and network and skips them.
+
+✅ If your VPS already has Docker, git, and a `deploy` user (as shown by `docker -v` and `whoami`), you can skip this step and go straight to 3.1.
 
 ### Step 3.1 — Reboot VPS (pending kernel update)
 
@@ -211,7 +230,7 @@ cp .env.example .env
 nano .env
 ```
 
-Fill in every value. Here's what goes where:
+Fill in every value. The basic values first:
 
 ```
 DOMAIN=aegisremit.ng
@@ -238,6 +257,14 @@ echo "RABBITMQ_PASSWORD=$(openssl rand -base64 24)"
 echo "MINIO_ROOT_PASSWORD=$(openssl rand -base64 24)"
 ```
 
+Generate the JWT signing secret and payload encryption key/IV (consumed by Portal.API, ERP.API, SFTP.API):
+
+```bash
+echo "JWT_SECRET_KEY=$(openssl rand -base64 48)"
+echo "ENCRYPTION_KEY=$(openssl rand -base64 32)"
+echo "ENCRYPTION_IV=$(openssl rand -base64 16)"
+```
+
 Your final .env should look like:
 
 ```
@@ -252,9 +279,18 @@ RABBITMQ_USER=aegisremit
 RABBITMQ_PASSWORD=<generated-password-2>
 MINIO_ROOT_USER=aegisremit
 MINIO_ROOT_PASSWORD=<generated-password-3>
+JWT_SECRET_KEY=<generated-48-byte-base64>
+JWT_ISSUER=https://api.aegisremit.ng
+JWT_AUDIENCE=aegisremit
+ENCRYPTION_KEY=<generated-32-byte-base64>
+ENCRYPTION_IV=<generated-16-byte-base64>
 ```
 
-Save and exit nano (Ctrl+X → Y → Enter).
+Save and exit nano (Ctrl+X → Y → Enter), then lock permissions:
+
+```bash
+chmod 600 .env
+```
 
 ✅ Verify: `cat .env` — all values filled, no CHANGE_ME remaining.
 
@@ -311,33 +347,60 @@ If you get connection errors, wait a few minutes for DNS propagation and SSL cer
 ### Step 3.7 — Verify service connections
 
 ```bash
-# Redis
-docker exec aegisremit-redis redis-cli -a $(grep REDIS_PASSWORD .env | cut -d= -f2) ping
+# Load .env into the shell so variables are available
+set -a && source .env && set +a
+
+# Redis (uses -f2- to handle base64 padding "=" in the password)
+docker exec aegisremit-redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping
 # Expected: PONG
 
 # RabbitMQ
-docker exec aegisremit-rabbitmq rabbitmq-diagnostics check_running
-# Expected: Health check passed
+docker exec aegisremit-rabbitmq rabbitmq-diagnostics -q check_running
+# Expected: (no error, exit code 0)
 
-# MinIO
-docker exec aegisremit-minio mc ready local
-# Expected: The cluster is ready
+# MinIO — readiness on the internal API port
+docker exec aegisremit-minio curl -fsS http://localhost:9000/minio/health/live
+# Expected: HTTP 200 (silent on success)
 ```
 
 ✅ All three should respond positively.
 
 ### Step 3.8 — Create MinIO buckets
 
-Access MinIO console at https://minio.aegisremit.ng or via CLI inside container:
+Access MinIO console at https://minio.aegisremit.ng or via CLI inside the container. Docker `exec` does NOT inherit host shell variables, so you must pass them explicitly via `-e`:
 
 ```bash
-docker exec aegisremit-minio mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
-docker exec aegisremit-minio mc mb local/invoices
-docker exec aegisremit-minio mc mb local/uploads
-docker exec aegisremit-minio mc mb local/documents
+set -a && source .env && set +a
+
+docker exec -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD aegisremit-minio \
+    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+
+docker exec aegisremit-minio mc mb --ignore-existing local/invoices
+docker exec aegisremit-minio mc mb --ignore-existing local/uploads
+docker exec aegisremit-minio mc mb --ignore-existing local/documents
 ```
 
 ✅ 3 buckets created.
+
+### Step 3.8b — Run database migrations against Aiven (one-time, from your dev machine)
+
+**Do this BEFORE Step 3.9.** Portal.API's auto-migrate on startup is gated on `ASPNETCORE_ENVIRONMENT=Development`, but in production the containers run as `Production`, so migrations will never be applied automatically. You must apply them once by hand from your local dev machine, pointed at the Aiven connection string.
+
+On your Windows dev machine:
+
+```powershell
+cd "C:\Users\PRECISION 5560\source\repos\AegisRemit\Remit\src\Presentation\AegisEInvoicing.Portal.API"
+
+# Set the same Aiven connection string that's in /opt/aegisremit/.env on the VPS
+$env:ConnectionStrings__DefaultConnection = "Host=your-host.aivencloud.com;Port=12345;Database=aegisremit;Username=avnadmin;Password=YOUR_AIVEN_PASSWORD;SslMode=Require;Trust Server Certificate=true"
+
+# Apply all pending migrations (requires dotnet-ef tool: dotnet tool install -g dotnet-ef)
+dotnet ef database update --project ../../Infrastructure/AegisEInvoicing.Infrastructure
+```
+
+✅ You should see `Done.` with no errors. Verify in the Aiven console that the tables were created.
+
+> **Repeat this step whenever a new EF migration is added to Portal.API before deploying the update.** If you ever hit a `relation "…" does not exist` error in production logs, that's the signal you forgot this step.
 
 ### Step 3.9 — Start application services (if images exist)
 

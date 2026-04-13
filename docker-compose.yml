@@ -87,6 +87,18 @@ services:
       - MinIO__AccessKey=${MINIO_ROOT_USER}
       - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
       - MinIO__UseSSL=false
+      # JWT
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      # Payload encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__Iv=${ENCRYPTION_IV}
+      # CORS — override first 3 entries of the appsettings.json array with production origins
+      - Cors__AllowedOrigins__0=https://${DOMAIN}
+      - Cors__AllowedOrigins__1=https://www.${DOMAIN}
+      - Cors__AllowedOrigins__2=https://app.${DOMAIN}
+      # Observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-portal-api
     networks:
@@ -138,6 +150,18 @@ services:
       - MinIO__AccessKey=${MINIO_ROOT_USER}
       - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
       - MinIO__UseSSL=false
+      # JWT
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      # Payload encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__Iv=${ENCRYPTION_IV}
+      # CORS
+      - Cors__AllowedOrigins__0=https://${DOMAIN}
+      - Cors__AllowedOrigins__1=https://www.${DOMAIN}
+      - Cors__AllowedOrigins__2=https://app.${DOMAIN}
+      # Observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-erp-api
     networks:
@@ -189,11 +213,26 @@ services:
       - MinIO__AccessKey=${MINIO_ROOT_USER}
       - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
       - MinIO__UseSSL=false
+      # JWT
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      # Payload encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__Iv=${ENCRYPTION_IV}
+      # Override the Windows FTP path from appsettings.json (C:/ftproot) to a Linux-friendly location
+      - SftpConfiguration__FtpRootPath=/app/ftproot
+      # Point SftpGo at a placeholder so DI doesn't blow up; admin features are inactive until SftpGo is deployed
+      - SftpGo__AdminApiUrl=http://127.0.0.1:0
+      - SftpGo__ApiKey=disabled
+      # Observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-sftp-api
     networks:
       - web
       - internal
+    volumes:
+      - sftp-data:/app/ftproot
     deploy:
       resources:
         limits:
@@ -363,3 +402,4 @@ volumes:
   minio-data:
   traefik-certs:
   traefik-logs:
+  sftp-data:

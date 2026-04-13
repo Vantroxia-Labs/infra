@@ -39,7 +39,8 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_API_URL: https://api.aegisremit.ng
+          VITE_API_BASE_URL: https://api.aegisremit.ng/api/v1
+          VITE_USE_MOCK: "false"
 
   # ─────────────────────────────────────────────────────────────────────────
   # Step 2: Build + Push Docker Image (only on main push)
@@ -78,7 +79,8 @@ jobs:
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.tags.outputs.sha_tag }}
           build-args: |
-            VITE_API_URL=https://api.aegisremit.ng
+            VITE_API_BASE_URL=https://api.aegisremit.ng/api/v1
+            VITE_USE_MOCK=false
 
   # ─────────────────────────────────────────────────────────────────────────
   # Step 3: Trigger deployment in infra repo
