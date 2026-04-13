@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════
 # AegisRemit — Manual Deploy Script
-# Usage: ./scripts/deploy.sh [service] [tag]
+# Usage: ./deploy.sh [service] [tag]
 # Examples:
-#   ./scripts/deploy.sh all              # Deploy all services (latest)
-#   ./scripts/deploy.sh api abc1234      # Deploy API with specific tag
-#   ./scripts/deploy.sh admin            # Deploy admin portal (latest)
+#   ./deploy.sh all                # Deploy all services (latest)
+#   ./deploy.sh portal-api abc1234 # Deploy Portal API with specific tag
+#   ./deploy.sh admin              # Deploy admin portal (latest)
 # ═══════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -42,13 +42,14 @@ deploy_service() {
 }
 
 case "$SERVICE" in
-  api)     deploy_service api ;;
-  worker)  deploy_service worker ;;
-  admin)   deploy_service admin ;;
+  portal-api)  deploy_service portal-api ;;
+  erp-api)     deploy_service erp-api ;;
+  sftp-api)    deploy_service sftp-api ;;
+  admin)       deploy_service admin ;;
   infra)
     echo "→ Pulling infrastructure services..."
-    docker compose pull postgres redis rabbitmq traefik otel-collector pg-backup
-    docker compose up -d postgres redis rabbitmq traefik otel-collector pg-backup
+    docker compose pull redis rabbitmq minio traefik otel-collector
+    docker compose up -d redis rabbitmq minio traefik otel-collector
     ;;
   all)
     echo "→ Pulling all images..."
@@ -58,7 +59,7 @@ case "$SERVICE" in
     ;;
   *)
     echo "Unknown service: $SERVICE"
-    echo "Valid options: api, worker, admin, infra, all"
+    echo "Valid options: portal-api, erp-api, sftp-api, admin, infra, all"
     exit 1
     ;;
 esac
@@ -74,7 +75,9 @@ echo ""
 
 # Health checks
 echo "── Health checks ──"
-curl -sf https://api.aegisremit.ng/health 2>/dev/null && echo " ✓ API healthy" || echo " ✗ API unreachable"
+curl -sf https://api.aegisremit.ng/health 2>/dev/null && echo " ✓ Portal API healthy" || echo " ✗ Portal API unreachable"
+curl -sf https://erp.aegisremit.ng/health 2>/dev/null && echo " ✓ ERP API healthy" || echo " ✗ ERP API unreachable"
+curl -sf https://sftp-api.aegisremit.ng/health 2>/dev/null && echo " ✓ SFTP API healthy" || echo " ✗ SFTP API unreachable"
 curl -sf https://app.aegisremit.ng 2>/dev/null && echo " ✓ Admin healthy" || echo " ✗ Admin unreachable"
 echo ""
 echo "── Running containers ──"

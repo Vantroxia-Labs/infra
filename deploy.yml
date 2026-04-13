@@ -22,8 +22,10 @@ on:
         type: choice
         options:
           - all
-          - api
-          - worker
+          - all-apis
+          - portal-api
+          - erp-api
+          - sftp-api
           - admin
       image_tag:
         description: 'Image tag (default: latest)'
@@ -94,24 +96,34 @@ jobs:
               docker compose ps "$svc"
             }
 
+            export IMAGE_TAG="$TAG"
+
             case "$SERVICE" in
-              api)
-                export IMAGE_TAG="$TAG"
-                deploy_service api
+              portal-api)
+                deploy_service portal-api
                 ;;
-              worker)
-                export IMAGE_TAG="$TAG"
-                deploy_service worker
+              erp-api)
+                deploy_service erp-api
+                ;;
+              sftp-api)
+                deploy_service sftp-api
                 ;;
               admin)
                 deploy_service admin
                 ;;
+              all-apis)
+                echo "→ Pulling all API images..."
+                docker compose pull portal-api erp-api sftp-api
+                echo "→ Restarting all APIs..."
+                docker compose up -d --no-deps portal-api erp-api sftp-api
+                sleep 5
+                docker compose ps
+                ;;
               all)
-                export IMAGE_TAG="$TAG"
                 echo "→ Pulling all images..."
-                docker compose pull api worker admin
+                docker compose pull portal-api erp-api sftp-api admin
                 echo "→ Restarting application services..."
-                docker compose up -d --no-deps api worker admin
+                docker compose up -d --no-deps portal-api erp-api sftp-api admin
                 sleep 5
                 docker compose ps
                 ;;
@@ -132,7 +144,9 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             echo "── Health checks ──"
-            curl -sf https://api.aegisremit.ng/health && echo " ✓ API healthy" || echo " ✗ API unhealthy"
+            curl -sf https://api.aegisremit.ng/health && echo " ✓ Portal API healthy" || echo " ✗ Portal API unhealthy"
+            curl -sf https://erp.aegisremit.ng/health && echo " ✓ ERP API healthy" || echo " ✗ ERP API unhealthy"
+            curl -sf https://sftp-api.aegisremit.ng/health && echo " ✓ SFTP API healthy" || echo " ✗ SFTP API unhealthy"
             curl -sf https://app.aegisremit.ng && echo " ✓ Admin healthy" || echo " ✗ Admin unhealthy"
             echo ""
             echo "── Running containers ──"

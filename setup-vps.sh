@@ -43,12 +43,12 @@ usermod -aG docker deploy
 apt install -y docker-compose-plugin
 
 # ── 7. Create project directory ───────────────────────────────────────────
-mkdir -p /opt/aegisremit/config
+mkdir -p /opt/aegisremit
 chown -R deploy:deploy /opt/aegisremit
 
 # ── 8. Swap (safety net on 8GB box) ──────────────────────────────────────
 if [ ! -f /swapfile ]; then
-  fallocate -l 2G /swapfile
+  fallocate -l 4G /swapfile
   chmod 600 /swapfile
   mkswap /swapfile
   swapon /swapfile

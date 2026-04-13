@@ -1,8 +1,9 @@
 ##############################################################################
 # AegisRemit — Production Docker Compose
 # Target: Contabo Cloud VPS 10 (4 vCPU / 8GB RAM / 75GB NVMe)
-# Region: Singapore
+# Region: EU Region
 # Domain: aegisremit.ng (via Cloudflare DNS)
+# Database: Aiven Cloud PostgreSQL (external)
 ##############################################################################
 
 services:
@@ -47,6 +48,10 @@ services:
     networks:
       - web
       - internal
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     labels:
       # Traefik dashboard at traefik.aegisremit.ng (protected by BasicAuth)
       - traefik.enable=true
@@ -58,15 +63,14 @@ services:
       - traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # APPLICATION — .NET 9 API (SaaS.API + EInvoiceIntegrator.API combined)
+  # APPLICATION — Portal API (.NET 10)
+  # Main frontend-facing API (multi-tenant SaaS portal)
   # ═══════════════════════════════════════════════════════════════════════════
-  api:
-    image: ghcr.io/vantroxia-labs/remit-api:${IMAGE_TAG:-latest}
-    container_name: aegisremit-api
+  portal-api:
+    image: ghcr.io/vantroxia-labs/remit-portal-api:${IMAGE_TAG:-latest}
+    container_name: aegisremit-portal-api
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
@@ -74,62 +78,141 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=aegisremit;Username=${PG_USER};Password=${PG_PASSWORD}
+      - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
       - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=${RABBITMQ_USER}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_ROOT_USER}
+      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
+      - MinIO__UseSSL=false
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_SERVICE_NAME=aegisremit-api
+      - OTEL_SERVICE_NAME=aegisremit-portal-api
     networks:
       - web
       - internal
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     labels:
       - traefik.enable=true
-      # API routes
-      - traefik.http.routers.api.rule=Host(`api.${DOMAIN}`)
-      - traefik.http.routers.api.entrypoints=websecure
-      - traefik.http.routers.api.tls.certresolver=letsencrypt
-      - traefik.http.services.api.loadbalancer.server.port=8080
+      - traefik.http.routers.portal-api.rule=Host(`api.${DOMAIN}`)
+      - traefik.http.routers.portal-api.entrypoints=websecure
+      - traefik.http.routers.portal-api.tls.certresolver=letsencrypt
+      - traefik.http.services.portal-api.loadbalancer.server.port=8080
       # Rate limiting
-      - traefik.http.routers.api.middlewares=api-ratelimit
+      - traefik.http.routers.portal-api.middlewares=api-ratelimit
       - traefik.http.middlewares.api-ratelimit.ratelimit.average=100
       - traefik.http.middlewares.api-ratelimit.ratelimit.burst=50
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # BACKGROUND WORKER — SFTP + Quartz jobs
+  # APPLICATION — ERP API (.NET 10)
+  # Enterprise Resource Planning integration API
   # ═══════════════════════════════════════════════════════════════════════════
-  worker:
-    image: ghcr.io/vantroxia-labs/remit-worker:${IMAGE_TAG:-latest}
-    container_name: aegisremit-worker
+  erp-api:
+    image: ghcr.io/vantroxia-labs/remit-erp-api:${IMAGE_TAG:-latest}
+    container_name: aegisremit-erp-api
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=aegisremit;Username=${PG_USER};Password=${PG_PASSWORD}
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
       - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=${RABBITMQ_USER}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_ROOT_USER}
+      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
+      - MinIO__UseSSL=false
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_SERVICE_NAME=aegisremit-worker
+      - OTEL_SERVICE_NAME=aegisremit-erp-api
     networks:
+      - web
       - internal
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.erp-api.rule=Host(`erp.${DOMAIN}`)
+      - traefik.http.routers.erp-api.entrypoints=websecure
+      - traefik.http.routers.erp-api.tls.certresolver=letsencrypt
+      - traefik.http.services.erp-api.loadbalancer.server.port=8080
+      # Rate limiting
+      - traefik.http.routers.erp-api.middlewares=erp-ratelimit
+      - traefik.http.middlewares.erp-ratelimit.ratelimit.average=100
+      - traefik.http.middlewares.erp-ratelimit.ratelimit.burst=50
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # ADMIN PORTAL — React/TypeScript frontend
+  # APPLICATION — SFTP API (.NET 10)
+  # File processing & SFTP integration API
+  # ═══════════════════════════════════════════════════════════════════════════
+  sftp-api:
+    image: ghcr.io/vantroxia-labs/remit-sftp-api:${IMAGE_TAG:-latest}
+    container_name: aegisremit-sftp-api
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
+      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_ROOT_USER}
+      - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
+      - MinIO__UseSSL=false
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=aegisremit-sftp-api
+    networks:
+      - web
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.sftp-api.rule=Host(`sftp-api.${DOMAIN}`)
+      - traefik.http.routers.sftp-api.entrypoints=websecure
+      - traefik.http.routers.sftp-api.tls.certresolver=letsencrypt
+      - traefik.http.services.sftp-api.loadbalancer.server.port=8080
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ADMIN PORTAL — React/TypeScript frontend (+ landing pages)
   # ═══════════════════════════════════════════════════════════════════════════
   admin:
     image: ghcr.io/vantroxia-labs/remit-admin:${IMAGE_TAG:-latest}
@@ -137,46 +220,17 @@ services:
     restart: unless-stopped
     networks:
       - web
+    deploy:
+      resources:
+        limits:
+          memory: 64M
     labels:
       - traefik.enable=true
-      - traefik.http.routers.admin.rule=Host(`app.${DOMAIN}`)
+      # app.aegisremit.ng + aegisremit.ng + www.aegisremit.ng
+      - traefik.http.routers.admin.rule=Host(`app.${DOMAIN}`) || Host(`${DOMAIN}`) || Host(`www.${DOMAIN}`)
       - traefik.http.routers.admin.entrypoints=websecure
       - traefik.http.routers.admin.tls.certresolver=letsencrypt
       - traefik.http.services.admin.loadbalancer.server.port=80
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # DATABASE — PostgreSQL 16
-  # ═══════════════════════════════════════════════════════════════════════════
-  postgres:
-    image: postgres:16-alpine
-    container_name: aegisremit-postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=aegisremit
-      - POSTGRES_USER=${PG_USER}
-      - POSTGRES_PASSWORD=${PG_PASSWORD}
-    volumes:
-      - pg-data:/var/lib/postgresql/data
-    networks:
-      - internal
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d aegisremit"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    # Memory tuning for shared 8GB box
-    command:
-      - postgres
-      - -c
-      - shared_buffers=512MB
-      - -c
-      - effective_cache_size=1536MB
-      - -c
-      - work_mem=8MB
-      - -c
-      - maintenance_work_mem=128MB
-      - -c
-      - max_connections=100
 
   # ═══════════════════════════════════════════════════════════════════════════
   # CACHE — Redis 7
@@ -190,6 +244,10 @@ services:
       - redis-data:/data
     networks:
       - internal
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -211,6 +269,10 @@ services:
     networks:
       - internal
       - web
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 30s
@@ -226,13 +288,45 @@ services:
       - traefik.http.services.rabbitmq.loadbalancer.server.port=15672
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # OBSERVABILITY — SigNoz (OpenTelemetry Collector + ClickHouse + UI)
+  # OBJECT STORAGE — MinIO
   # ═══════════════════════════════════════════════════════════════════════════
-  # SigNoz is deployed via its own compose file, included here as an override.
-  # Run: docker compose -f docker-compose.yml -f docker-compose.signoz.yml up -d
-  #
-  # We include only the OTEL collector inline so the app services can ship
-  # traces/metrics without depending on the full SigNoz stack being up.
+  minio:
+    image: minio/minio:latest
+    container_name: aegisremit-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    networks:
+      - internal
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    labels:
+      # MinIO Console at minio.aegisremit.ng (BasicAuth protected)
+      - traefik.enable=true
+      - traefik.http.routers.minio-console.rule=Host(`minio.${DOMAIN}`)
+      - traefik.http.routers.minio-console.entrypoints=websecure
+      - traefik.http.routers.minio-console.tls.certresolver=letsencrypt
+      - traefik.http.routers.minio-console.middlewares=auth
+      - traefik.http.services.minio-console.loadbalancer.server.port=9001
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # OBSERVABILITY — OpenTelemetry Collector
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SigNoz will be deployed standalone later.
+  # The collector accepts telemetry from all services now and
+  # forwards to SigNoz once it's available (drops gracefully until then).
   # ═══════════════════════════════════════════════════════════════════════════
   otel-collector:
     image: signoz/signoz-otel-collector:0.102.12
@@ -240,38 +334,15 @@ services:
     restart: unless-stopped
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
-      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
-    ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     networks:
       - internal
-      - web
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     labels:
       - traefik.enable=false
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # BACKUP — Automated PostgreSQL backups
-  # ═══════════════════════════════════════════════════════════════════════════
-  pg-backup:
-    image: prodrigestivill/postgres-backup-local:16
-    container_name: aegisremit-pg-backup
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=aegisremit
-      - POSTGRES_USER=${PG_USER}
-      - POSTGRES_PASSWORD=${PG_PASSWORD}
-      - SCHEDULE=@daily
-      - BACKUP_NUM_KEEP=7
-      - BACKUP_DIR=/backups
-    volumes:
-      - pg-backups:/backups
-    networks:
-      - internal
 
 # ═════════════════════════════════════════════════════════════════════════════
 # NETWORKS
@@ -287,9 +358,8 @@ networks:
 # VOLUMES
 # ═════════════════════════════════════════════════════════════════════════════
 volumes:
-  pg-data:
-  pg-backups:
   redis-data:
   rabbitmq-data:
+  minio-data:
   traefik-certs:
   traefik-logs:

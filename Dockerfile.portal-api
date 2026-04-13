@@ -1,0 +1,51 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# AegisRemit Portal API — Multi-stage Dockerfile
+# Place at: Vantroxia-Labs/remit/Dockerfile.portal-api
+# Build context: repository root (so all projects are accessible)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: Build ─────────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
+WORKDIR /src
+
+# Copy solution and all project files first (layer caching)
+COPY *.sln ./
+COPY src/Core/AegisEInvoicing.Domain/*.csproj src/Core/AegisEInvoicing.Domain/
+COPY src/Core/AegisEInvoicing.Application/*.csproj src/Core/AegisEInvoicing.Application/
+COPY src/Infrastructure/AegisEInvoicing.Infrastructure/*.csproj src/Infrastructure/AegisEInvoicing.Infrastructure/
+COPY src/Infrastructure/AegisEInvoicing.Persistence/*.csproj src/Infrastructure/AegisEInvoicing.Persistence/
+COPY src/Integrations/AegisEInvoicing.FIRSAccessPoint/*.csproj src/Integrations/AegisEInvoicing.FIRSAccessPoint/
+COPY src/Integrations/AegisEInvoicing.Interswitch/*.csproj src/Integrations/AegisEInvoicing.Interswitch/
+COPY src/Integrations/AegisEInvoicing.NotificationService/*.csproj src/Integrations/AegisEInvoicing.NotificationService/
+COPY src/Integrations/AegisEInvoicing.Paystack/*.csproj src/Integrations/AegisEInvoicing.Paystack/
+COPY src/Integrations/AegisEInvoicing.BlueBridge/*.csproj src/Integrations/AegisEInvoicing.BlueBridge/
+COPY src/Integrations/AegisEInvoicing.Etranzact/*.csproj src/Integrations/AegisEInvoicing.Etranzact/
+COPY src/Presentation/AegisEInvoicing.Portal.API/*.csproj src/Presentation/AegisEInvoicing.Portal.API/
+COPY src/Presentation/AegisEInvoicing.ERP.API/*.csproj src/Presentation/AegisEInvoicing.ERP.API/
+COPY src/Presentation/AegisEInvoicing.SFTP.API/*.csproj src/Presentation/AegisEInvoicing.SFTP.API/
+
+RUN dotnet restore src/Presentation/AegisEInvoicing.Portal.API/AegisEInvoicing.Portal.API.csproj
+
+# Copy everything and build
+COPY . .
+RUN dotnet publish src/Presentation/AegisEInvoicing.Portal.API/AegisEInvoicing.Portal.API.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore
+
+# ── Stage 2: Runtime ───────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime
+WORKDIR /app
+
+# Security: run as non-root
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+COPY --from=build /app/publish .
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+    CMD wget -qO- http://localhost:8080/health || exit 1
+
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "AegisEInvoicing.Portal.API.dll"]

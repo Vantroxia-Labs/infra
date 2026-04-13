@@ -13,8 +13,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  API_IMAGE: ghcr.io/vantroxia-labs/remit-api
-  WORKER_IMAGE: ghcr.io/vantroxia-labs/remit-worker
+  PORTAL_API_IMAGE: ghcr.io/vantroxia-labs/remit-portal-api
+  ERP_API_IMAGE: ghcr.io/vantroxia-labs/remit-erp-api
+  SFTP_API_IMAGE: ghcr.io/vantroxia-labs/remit-sftp-api
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
@@ -25,10 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET 9
+      - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: 10.0.x
 
       - name: Restore dependencies
         run: dotnet restore
@@ -59,6 +60,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      sha_tag: ${{ steps.tags.outputs.sha_tag }}
 
     steps:
       - uses: actions/checkout@v4
@@ -77,29 +80,41 @@ jobs:
           echo "sha_tag=$SHA" >> $GITHUB_OUTPUT
           echo "date_tag=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
-      # ── API Image ─────────────────────────────────────────────────────
-      - name: Build and push API image
+      # ── Portal API Image ──────────────────────────────────────────────
+      - name: Build and push Portal API image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./src/AegisRemit.API/Dockerfile
+          file: ./Dockerfile.portal-api
           push: true
           tags: |
-            ${{ env.API_IMAGE }}:latest
-            ${{ env.API_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
-            ${{ env.API_IMAGE }}:${{ steps.tags.outputs.date_tag }}
+            ${{ env.PORTAL_API_IMAGE }}:latest
+            ${{ env.PORTAL_API_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
+            ${{ env.PORTAL_API_IMAGE }}:${{ steps.tags.outputs.date_tag }}
 
-      # ── Worker Image ──────────────────────────────────────────────────
-      - name: Build and push Worker image
+      # ── ERP API Image ─────────────────────────────────────────────────
+      - name: Build and push ERP API image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./src/AegisRemit.SFTPBackgroundService/Dockerfile
+          file: ./Dockerfile.erp-api
           push: true
           tags: |
-            ${{ env.WORKER_IMAGE }}:latest
-            ${{ env.WORKER_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
-            ${{ env.WORKER_IMAGE }}:${{ steps.tags.outputs.date_tag }}
+            ${{ env.ERP_API_IMAGE }}:latest
+            ${{ env.ERP_API_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
+            ${{ env.ERP_API_IMAGE }}:${{ steps.tags.outputs.date_tag }}
+
+      # ── SFTP API Image ────────────────────────────────────────────────
+      - name: Build and push SFTP API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.sftp-api
+          push: true
+          tags: |
+            ${{ env.SFTP_API_IMAGE }}:latest
+            ${{ env.SFTP_API_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
+            ${{ env.SFTP_API_IMAGE }}:${{ steps.tags.outputs.date_tag }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # Step 3: Trigger deployment in infra repo
@@ -116,7 +131,7 @@ jobs:
           event-type: deploy
           client-payload: |
             {
-              "service": "api",
+              "service": "all-apis",
               "image_tag": "${{ needs.docker.outputs.sha_tag || 'latest' }}",
               "triggered_by": "${{ github.repository }}",
               "commit_sha": "${{ github.sha }}",
