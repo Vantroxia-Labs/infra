@@ -3,8 +3,9 @@
 # AegisRemit — Manual Deploy Script
 # Usage: ./deploy.sh [service] [tag]
 # Examples:
-#   ./deploy.sh all                # Deploy all services (latest)
-#   ./deploy.sh infra              # Deploy infrastructure only
+#   ./deploy.sh all                # Deploy all application services (latest)
+#   ./deploy.sh infra              # Deploy infrastructure services
+#   ./deploy.sh traefik            # Deploy Traefik reverse proxy
 #   ./deploy.sh apps               # Deploy all application services
 #   ./deploy.sh portal-api abc1234 # Deploy Portal API with specific tag
 #   ./deploy.sh admin              # Deploy admin portal (latest)
@@ -13,13 +14,8 @@ set -euo pipefail
 
 SERVICE="${1:-all}"
 TAG="${2:-latest}"
-COMPOSE_DIR="/opt/aegisremit"
-
-# Compose file references
-INFRA="-f docker-compose.yml"
-APPS="-f docker-compose.yml -f docker-compose.apps.yml"
-
-cd "$COMPOSE_DIR"
+BASE_DIR="/opt/aegisremit"
+ENV_FILE="--env-file ${BASE_DIR}/.env"
 
 echo "═══════════════════════════════════════════"
 echo "  AegisRemit — Manual Deploy"
@@ -35,53 +31,74 @@ export IMAGE_TAG="$TAG"
 
 deploy_service() {
   local svc=$1
+  local dir=$2
   echo ""
-  echo "→ Pulling $svc..."
-  docker compose $APPS pull "$svc"
+  echo "→ Pulling $svc in $dir..."
+  cd "$BASE_DIR/$dir"
+  docker compose $ENV_FILE pull "$svc"
   echo "→ Stopping $svc..."
-  docker compose $APPS stop "$svc"
+  docker compose $ENV_FILE stop "$svc"
   echo "→ Starting $svc..."
-  docker compose $APPS up -d --no-deps "$svc"
+  docker compose $ENV_FILE up -d --no-deps "$svc"
   echo "→ Waiting 5s for $svc..."
   sleep 5
-  docker compose $APPS ps "$svc"
+  docker compose $ENV_FILE ps "$svc"
 }
 
 case "$SERVICE" in
-  portal-api)  deploy_service portal-api ;;
-  erp-api)     deploy_service erp-api ;;
-  sftp-api)    deploy_service sftp-api ;;
-  admin)       deploy_service admin ;;
+  portal-api)  deploy_service portal-api apps ;;
+  erp-api)     deploy_service erp-api apps ;;
+  sftp-api)    deploy_service sftp-api apps ;;
+  admin)       deploy_service admin apps ;;
   all-apis)
+    cd "$BASE_DIR/apps"
     echo "→ Pulling all API images..."
-    docker compose $APPS pull portal-api erp-api sftp-api
+    docker compose $ENV_FILE pull portal-api erp-api sftp-api
     echo "→ Restarting all APIs..."
-    docker compose $APPS up -d --no-deps portal-api erp-api sftp-api
+    docker compose $ENV_FILE up -d --no-deps portal-api erp-api sftp-api
     sleep 5
-    docker compose $APPS ps
+    docker compose $ENV_FILE ps
     ;;
   apps)
+    cd "$BASE_DIR/apps"
     echo "→ Pulling all application images..."
-    docker compose $APPS pull portal-api erp-api sftp-api admin
+    docker compose $ENV_FILE pull portal-api erp-api sftp-api admin
     echo "→ Restarting all application services..."
-    docker compose $APPS up -d --no-deps portal-api erp-api sftp-api admin
+    docker compose $ENV_FILE up -d --no-deps portal-api erp-api sftp-api admin
     sleep 5
-    docker compose $APPS ps
+    docker compose $ENV_FILE ps
     ;;
   infra)
+    cd "$BASE_DIR/infra"
     echo "→ Pulling infrastructure services..."
-    docker compose $INFRA pull
-    docker compose $INFRA up -d
+    docker compose $ENV_FILE pull
+    docker compose $ENV_FILE up -d
+    ;;
+  traefik)
+    cd "$BASE_DIR/traefik"
+    echo "→ Pulling Traefik..."
+    docker compose $ENV_FILE pull
+    docker compose $ENV_FILE up -d
     ;;
   all)
-    echo "→ Pulling all images..."
-    docker compose $APPS pull
-    echo "→ Restarting all services..."
-    docker compose $APPS up -d
+    cd "$BASE_DIR/traefik"
+    echo "→ Updating Traefik..."
+    docker compose $ENV_FILE pull
+    docker compose $ENV_FILE up -d
+
+    cd "$BASE_DIR/infra"
+    echo "→ Updating infrastructure..."
+    docker compose $ENV_FILE pull
+    docker compose $ENV_FILE up -d
+
+    cd "$BASE_DIR/apps"
+    echo "→ Updating applications..."
+    docker compose $ENV_FILE pull
+    docker compose $ENV_FILE up -d
     ;;
   *)
     echo "Unknown service: $SERVICE"
-    echo "Valid options: portal-api, erp-api, sftp-api, admin, all-apis, apps, infra, all"
+    echo "Valid options: portal-api, erp-api, sftp-api, admin, all-apis, apps, infra, traefik, all"
     exit 1
     ;;
 esac
@@ -103,4 +120,9 @@ curl -sf https://sftp-api.aegisremit.ng/health 2>/dev/null && echo " ✓ SFTP AP
 curl -sf https://app.aegisremit.ng 2>/dev/null && echo " ✓ Admin healthy" || echo " ✗ Admin unreachable"
 echo ""
 echo "── Running containers ──"
-docker compose $APPS ps --format "table {{.Name}}\t{{.Status}}"
+echo "--- Traefik ---"
+cd "$BASE_DIR/traefik" && docker compose $ENV_FILE ps --format "table {{.Name}}\t{{.Status}}"
+echo "--- Infrastructure ---"
+cd "$BASE_DIR/infra" && docker compose $ENV_FILE ps --format "table {{.Name}}\t{{.Status}}"
+echo "--- Applications ---"
+cd "$BASE_DIR/apps" && docker compose $ENV_FILE ps --format "table {{.Name}}\t{{.Status}}"

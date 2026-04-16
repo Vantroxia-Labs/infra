@@ -15,6 +15,8 @@ DEPLOY_USER="deploy"
 DEPLOY_DIR="/opt/aegisremit"
 SWAP_SIZE="2G"
 DOCKER_WEB_NETWORK="aegisremit-web"
+DOCKER_INTERNAL_NETWORK="aegisremit-internal"
+SFTP_DATA_VOLUME="aegisremit-sftp-data"
 
 log()  { printf '\033[1;34m[bootstrap]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[bootstrap]\033[0m %s\n' "$*" >&2; }
@@ -110,7 +112,7 @@ else
     log "Swap already configured."
 fi
 
-# ── 9. Docker web network (shared across compose stacks) ──────────────────
+# ── 9. Docker networks (shared across segregated compose stacks) ──────────
 if ! docker network inspect "$DOCKER_WEB_NETWORK" >/dev/null 2>&1; then
     log "Creating docker network '$DOCKER_WEB_NETWORK'..."
     docker network create "$DOCKER_WEB_NETWORK"
@@ -118,29 +120,53 @@ else
     log "Docker network '$DOCKER_WEB_NETWORK' already exists."
 fi
 
-# ── 10. Summary ───────────────────────────────────────────────────────────
+if ! docker network inspect "$DOCKER_INTERNAL_NETWORK" >/dev/null 2>&1; then
+    log "Creating docker network '$DOCKER_INTERNAL_NETWORK' (internal)..."
+    # --internal prevents direct outbound internet access from this network.
+    # Services that need external connectivity (e.g. MinIO, RabbitMQ) are
+    # also attached to the 'web' network, which allows outbound traffic.
+    docker network create --internal "$DOCKER_INTERNAL_NETWORK"
+else
+    log "Docker network '$DOCKER_INTERNAL_NETWORK' already exists."
+fi
+
+# ── 10. Shared Docker volumes ─────────────────────────────────────────────
+# sftp-data is shared between infra (sftpgo) and apps (sftp-api)
+if ! docker volume inspect "$SFTP_DATA_VOLUME" >/dev/null 2>&1; then
+    log "Creating shared volume '$SFTP_DATA_VOLUME'..."
+    docker volume create "$SFTP_DATA_VOLUME"
+else
+    log "Docker volume '$SFTP_DATA_VOLUME' already exists."
+fi
+
+# ── 11. Summary ───────────────────────────────────────────────────────────
 cat <<EOF
 
 ═══════════════════════════════════════════════════════════════════════════
   VPS bootstrap complete.
 
+  Docker networks:  $DOCKER_WEB_NETWORK, $DOCKER_INTERNAL_NETWORK
+  Shared volumes:   $SFTP_DATA_VOLUME
+  Deploy directory: $DEPLOY_DIR
+
   Next steps (as the '$DEPLOY_USER' user):
 
   1. Copy infra files into $DEPLOY_DIR:
-       scp Infra/docker-compose.yml           $DEPLOY_USER@<host>:$DEPLOY_DIR/
-       scp Infra/otel-collector-config.yaml   $DEPLOY_USER@<host>:$DEPLOY_DIR/
+       scp -r Infra/traefik/ Infra/infra/ Infra/apps/ \\
+         $DEPLOY_USER@<host>:$DEPLOY_DIR/
+       scp Infra/.env.example Infra/otel-collector-config.yaml \\
+         $DEPLOY_USER@<host>:$DEPLOY_DIR/
 
-  2. Create $DEPLOY_DIR/.env from Infra/.env.example, then:
+  2. Create $DEPLOY_DIR/.env from .env.example, then:
        chmod 600 $DEPLOY_DIR/.env
 
   3. Log in to GHCR so compose can pull private images:
        echo \$GHCR_PAT | docker login ghcr.io -u <github_user> --password-stdin
 
-  4. Bootstrap infra services first, then apps:
-       cd $DEPLOY_DIR
-       docker compose up -d traefik redis rabbitmq minio otel-collector
-       docker compose logs -f traefik   # wait for Let's Encrypt
-       docker compose up -d portal-api erp-api sftp-api admin
+  4. Bootstrap each stack in order:
+       cd $DEPLOY_DIR/traefik && docker compose --env-file ../.env up -d
+       cd $DEPLOY_DIR/infra   && docker compose --env-file ../.env up -d
+       cd $DEPLOY_DIR/apps    && docker compose --env-file ../.env up -d
 
 ═══════════════════════════════════════════════════════════════════════════
 EOF

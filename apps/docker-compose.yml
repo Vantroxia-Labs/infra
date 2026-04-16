@@ -1,9 +1,14 @@
 ##############################################################################
-# AegisRemit — Application / Domain Services (docker-compose.apps.yml)
-# Requires infrastructure from docker-compose.yml to be running first.
+# AegisRemit — Application / Domain Services (apps/docker-compose.yml)
+# Target: Contabo Cloud VPS 10 (4 vCPU / 8GB RAM / 75GB NVMe)
+# Domain: aegisremit.ng (via Cloudflare DNS)
+#
+# Requires infrastructure from ../infra/docker-compose.yml to be running.
+# Requires Traefik from ../traefik/docker-compose.yml to be running.
 #
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d
+#   cd /opt/aegisremit/apps
+#   docker compose --env-file ../.env up -d
 ##############################################################################
 
 services:
@@ -16,20 +21,16 @@ services:
     image: ghcr.io/vantroxia-labs/remit-portal-api:${IMAGE_TAG:-latest}
     container_name: aegisremit-portal-api
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
-      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
-      - RabbitMQ__Host=rabbitmq
+      # Container names for cross-stack service references
+      - ConnectionStrings__Redis=aegisremit-redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=aegisremit-rabbitmq
       - RabbitMQ__Username=${RABBITMQ_USER}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD}
-      - MinIO__Endpoint=minio:9000
+      - MinIO__Endpoint=aegisremit-minio:9000
       - MinIO__AccessKey=${MINIO_ROOT_USER}
       - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
       - MinIO__UseSSL=false
@@ -45,7 +46,7 @@ services:
       - Cors__AllowedOrigins__1=https://www.${DOMAIN}
       - Cors__AllowedOrigins__2=https://app.${DOMAIN}
       # Observability
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aegisremit-otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-portal-api
     networks:
       - web
@@ -79,20 +80,16 @@ services:
     image: ghcr.io/vantroxia-labs/remit-erp-api:${IMAGE_TAG:-latest}
     container_name: aegisremit-erp-api
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
-      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
-      - RabbitMQ__Host=rabbitmq
+      # Container names for cross-stack service references
+      - ConnectionStrings__Redis=aegisremit-redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=aegisremit-rabbitmq
       - RabbitMQ__Username=${RABBITMQ_USER}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD}
-      - MinIO__Endpoint=minio:9000
+      - MinIO__Endpoint=aegisremit-minio:9000
       - MinIO__AccessKey=${MINIO_ROOT_USER}
       - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
       - MinIO__UseSSL=false
@@ -108,7 +105,7 @@ services:
       - Cors__AllowedOrigins__1=https://www.${DOMAIN}
       - Cors__AllowedOrigins__2=https://app.${DOMAIN}
       # Observability
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aegisremit-otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-erp-api
     networks:
       - web
@@ -137,26 +134,22 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   # APPLICATION — SFTP API (.NET 10)
   # File processing & SFTP integration API
-  # Shares sftp-data volume with SFTPGo (infrastructure service)
+  # Shares sftp-data volume with SFTPGo (infrastructure stack)
   # ═══════════════════════════════════════════════════════════════════════════
   sftp-api:
     image: ghcr.io/vantroxia-labs/remit-sftp-api:${IMAGE_TAG:-latest}
     container_name: aegisremit-sftp-api
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=${AIVEN_CONNECTION_STRING}
-      - ConnectionStrings__Redis=redis:6379,password=${REDIS_PASSWORD}
-      - RabbitMQ__Host=rabbitmq
+      # Container names for cross-stack service references
+      - ConnectionStrings__Redis=aegisremit-redis:6379,password=${REDIS_PASSWORD}
+      - RabbitMQ__Host=aegisremit-rabbitmq
       - RabbitMQ__Username=${RABBITMQ_USER}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD}
-      - MinIO__Endpoint=minio:9000
+      - MinIO__Endpoint=aegisremit-minio:9000
       - MinIO__AccessKey=${MINIO_ROOT_USER}
       - MinIO__SecretKey=${MINIO_ROOT_PASSWORD}
       - MinIO__UseSSL=false
@@ -169,11 +162,11 @@ services:
       - Encryption__Iv=${ENCRYPTION_IV}
       # SFTPGo shared data directory (same volume as SFTPGo uses)
       - SftpConfiguration__FtpRootPath=/srv/sftpgo/data
-      # SFTPGo REST API — user management via SftpGoAdminService
-      - SftpGo__AdminApiUrl=http://sftpgo:8080
+      # SFTPGo REST API — user management via SftpGoAdminService (container name)
+      - SftpGo__AdminApiUrl=http://aegisremit-sftpgo:8080
       - SftpGo__ApiKey=${SFTPGO_API_KEY}
       # Observability
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aegisremit-otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-sftp-api
     networks:
       - web
@@ -219,7 +212,7 @@ services:
       - traefik.http.services.admin.loadbalancer.server.port=80
 
 # ═════════════════════════════════════════════════════════════════════════════
-# NETWORKS — reference networks created by docker-compose.yml
+# NETWORKS — created externally by bootstrap-vps.sh
 # ═════════════════════════════════════════════════════════════════════════════
 networks:
   web:
@@ -230,8 +223,9 @@ networks:
     external: true
 
 # ═════════════════════════════════════════════════════════════════════════════
-# VOLUMES — reference volumes created by docker-compose.yml
+# VOLUMES — sftp-data is shared with infra stack (created externally)
 # ═════════════════════════════════════════════════════════════════════════════
 volumes:
   sftp-data:
+    name: aegisremit-sftp-data
     external: true

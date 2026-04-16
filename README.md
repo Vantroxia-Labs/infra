@@ -6,10 +6,31 @@ Production infrastructure for [aegisremit.ng](https://aegisremit.ng), deployed o
 
 ```
 Vantroxia-Labs/
-├── remit          # .NET 9 backend (API + background worker)
+├── remit          # .NET 10 backend (Portal API, ERP API, SFTP API)
 ├── admin          # React/TypeScript admin portal
 └── infra          # ← you are here (deployment, CI/CD, config)
 ```
+
+## Directory structure
+
+The infrastructure is physically segregated into three isolated compose stacks.
+Updating an API will never inadvertently restart the reverse proxy, and taking
+down the proxy won't kill your database connections.
+
+```
+/opt/aegisremit/               # VPS deploy directory
+├── .env                       # Secrets (never committed)
+├── otel-collector-config.yaml # OpenTelemetry config
+├── traefik/
+│   └── docker-compose.yml     # Traefik reverse proxy (edge router)
+├── infra/
+│   └── docker-compose.yml     # Redis, RabbitMQ, MinIO, OTEL, SFTPGo
+└── apps/
+    └── docker-compose.yml     # Portal API, ERP API, SFTP API, Admin
+```
+
+Shared resources (Docker networks and volumes) are created externally by
+`scripts/bootstrap-vps.sh` before any compose stack is started.
 
 ## Architecture
 
@@ -26,44 +47,44 @@ Internet
   │                             │  │  │
   │    api.aegisremit.ng  ──────┘  │  └──── app.aegisremit.ng
   │         │                      │              │
-  │    ┌────▼─────┐          rabbitmq.*      ┌────▼─────┐
-  │    │  .NET 9  │          traefik.*       │  React   │
-  │    │   API    │          (dashboards)     │  Admin   │
-  │    └────┬─────┘                          └──────────┘
+  │    ┌────▼─────┐          erp.aegisremit.ng   ┌────▼─────┐
+  │    │ Portal   │          sftp-api.*           │  React   │
+  │    │   API    │          (dashboards)         │  Admin   │
+  │    └────┬─────┘                               └──────────┘
   │         │
-  │    ┌────▼─────┐
-  │    │  Worker  │ (SFTP + Quartz jobs)
-  │    └────┬─────┘
-  │         │
-  │    ┌────┼──────────┬──────────┐
-  │    │    │          │          │
-  │  ┌─▼──┐ ┌──▼──┐ ┌──▼───┐ ┌──▼──────┐
-  │  │ PG │ │Redis│ │Rabbit│ │  OTEL   │
-  │  │ 16 │ │  7  │ │ MQ   │ │Collector│
-  │  └────┘ └─────┘ └──────┘ └────┬────┘
-  │                                │
-  │                          ┌─────▼─────┐
-  │                          │  SigNoz   │
-  │                          │(deferred) │
-  │                          └───────────┘
+  │    ┌────┼──────────┬──────────┬──────────┐
+  │    │    │          │          │          │
+  │  ┌─▼──┐ ┌──▼──┐ ┌──▼───┐ ┌──▼──┐ ┌──▼──────┐
+  │  │ PG │ │Redis│ │Rabbit│ │MinIO│ │  OTEL   │
+  │  │(ext)│ │  7  │ │ MQ   │ │     │ │Collector│
+  │  └────┘ └─────┘ └──────┘ └─────┘ └────┬────┘
+  │  Aiven                                 │
+  │  Cloud                           ┌─────▼─────┐
+  │                                  │  SigNoz   │
+  │                                  │(deferred) │
+  │                                  └───────────┘
 ```
 
 ## Subdomains
 
 | Subdomain | Service | Access |
 |---|---|---|
-| `api.aegisremit.ng` | .NET API | Public |
+| `api.aegisremit.ng` | Portal API | Public |
+| `erp.aegisremit.ng` | ERP API | Public |
+| `sftp-api.aegisremit.ng` | SFTP API | Public |
 | `app.aegisremit.ng` | React admin portal | Public |
+| `aegisremit.ng` / `www` | React admin portal | Public |
 | `traefik.aegisremit.ng` | Traefik dashboard | BasicAuth |
 | `rabbitmq.aegisremit.ng` | RabbitMQ management | BasicAuth |
-| `signoz.aegisremit.ng` | SigNoz UI (future) | BasicAuth |
+| `minio.aegisremit.ng` | MinIO console | BasicAuth |
+| `sftpgo.aegisremit.ng` | SFTPGo web admin | BasicAuth |
 
 ## Quick start (after VPS provisioning)
 
 ```bash
-# 1. SSH into VPS as root, run initial setup
-scp setup/setup-vps.sh root@YOUR_VPS_IP:/root/
-ssh root@YOUR_VPS_IP 'bash /root/setup-vps.sh'
+# 1. SSH into VPS as root, run bootstrap
+scp scripts/bootstrap-vps.sh root@YOUR_VPS_IP:/tmp/
+ssh root@YOUR_VPS_IP 'bash /tmp/bootstrap-vps.sh "ssh-ed25519 AAAA...your-ci-key"'
 
 # 2. SSH as deploy user, clone infra
 ssh deploy@YOUR_VPS_IP
@@ -73,12 +94,14 @@ cd /opt/aegisremit
 # 3. Configure environment
 cp .env.example .env
 nano .env  # fill in real passwords + Cloudflare token
+chmod 600 .env
 
-# 4. Launch
-docker compose up -d
+# 4. Launch each stack in order
+cd /opt/aegisremit/traefik && docker compose --env-file ../.env up -d
+cd /opt/aegisremit/infra   && docker compose --env-file ../.env up -d
+cd /opt/aegisremit/apps    && docker compose --env-file ../.env up -d
 
 # 5. Verify
-docker compose ps
 curl -k https://api.aegisremit.ng/health
 ```
 
@@ -88,10 +111,10 @@ curl -k https://api.aegisremit.ng/health
 Developer pushes to remit/admin repo
   │
   ├─► GitHub Actions builds Docker image
-  ├─► Pushes to ghcr.io/vantroxia-labs/remit-api:sha-abc123
-  ├─► Updates image tag in infra repo (or dispatches deploy)
+  ├─► Pushes to ghcr.io/vantroxia-labs/remit-*:sha-abc123
+  ├─► Dispatches deploy event to infra repo
   │
-  └─► VPS pulls new image + restarts service
+  └─► VPS: cd /opt/aegisremit/apps → pull new image → restart service
 ```
 
 See `.github/workflows/` in each repo for pipeline definitions.
