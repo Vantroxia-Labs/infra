@@ -122,6 +122,9 @@ fi
 
 if ! docker network inspect "$DOCKER_INTERNAL_NETWORK" >/dev/null 2>&1; then
     log "Creating docker network '$DOCKER_INTERNAL_NETWORK' (internal)..."
+    # --internal prevents direct outbound internet access from this network.
+    # Services that need external connectivity (e.g. MinIO, RabbitMQ) are
+    # also attached to the 'web' network, which allows outbound traffic.
     docker network create --internal "$DOCKER_INTERNAL_NETWORK"
 else
     log "Docker network '$DOCKER_INTERNAL_NETWORK' already exists."

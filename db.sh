@@ -49,13 +49,13 @@ case "${1:-help}" in
     fi
 
     echo "→ Stopping application services..."
-    docker compose --env-file ../.env -f /opt/aegisremit/apps/docker-compose.yml stop portal-api erp-api sftp-api
+    docker compose --env-file /opt/aegisremit/.env -f /opt/aegisremit/apps/docker-compose.yml stop portal-api erp-api sftp-api
 
     echo "→ Restoring from $FILE..."
     gunzip -c "$FILE" | docker exec -i "$CONTAINER" psql -U "$PG_USER" -d aegisremit
 
     echo "→ Restarting application services..."
-    docker compose --env-file ../.env -f /opt/aegisremit/apps/docker-compose.yml start portal-api erp-api sftp-api
+    docker compose --env-file /opt/aegisremit/.env -f /opt/aegisremit/apps/docker-compose.yml start portal-api erp-api sftp-api
 
     echo "✓ Restore complete"
     ;;

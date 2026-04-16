@@ -132,7 +132,9 @@ services:
   # SFTP SERVER — SFTPGo v2
   # Managed SFTP server with REST API for user provisioning.
   # External auth delegates credential checks to sftp-api (apps stack).
-  # NOTE: SFTP auth requires sftp-api to be running (from apps/docker-compose.yml).
+  # ⚠ IMPORTANT: The apps stack (apps/docker-compose.yml) MUST be running
+  #   for SFTP authentication to work. SFTPGo calls aegisremit-sftp-api:8080
+  #   to validate credentials. If sftp-api is down, SFTP logins will fail.
   # ═══════════════════════════════════════════════════════════════════════════
   sftpgo:
     image: sftpgo/sftpgo:v2
