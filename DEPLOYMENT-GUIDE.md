@@ -17,20 +17,16 @@
            API    API  API  (nginx) (Traefik)
               └────┴────┴────┘
                    │    Internal Network
-           ┌──────┼──────┬──────────┐
-         Redis  RabbitMQ  MinIO   OTEL Collector
+           ┌──────┼──────┬──────────┬──────┐
+         Redis  RabbitMQ  MinIO   SFTPGo  OTEL
                    │
            Aiven Cloud PostgreSQL (external)
 ```
 
-**Services:**
-- 3 x .NET 10 Web APIs (Portal, ERP, SFTP)
-- 1 x React/TypeScript admin portal + landing pages (nginx)
-- Traefik v3.1 (reverse proxy, TLS)
-- Redis 7 (cache)
-- RabbitMQ 3.13 (message broker)
-- MinIO (object storage for invoices/files)
-- OTEL Collector (telemetry → SigNoz later)
+**Stacks (physically segregated):**
+- `traefik/` — Traefik v3.1 (reverse proxy, TLS)
+- `infra/` — Redis 7, RabbitMQ 3.13, MinIO, SFTPGo, OTEL Collector
+- `apps/` — 3 x .NET 10 Web APIs (Portal, ERP, SFTP) + React admin (nginx)
 - Database: Aiven Cloud PostgreSQL (external, not on VPS)
 
 ---
@@ -167,7 +163,7 @@ Save it somewhere safe temporarily. We'll use it in Step 3.3.
 
 ### Step 3.0 — VPS bootstrap (skip if already done)
 
-If you started from a fresh Ubuntu 24.04 image, run the idempotent bootstrap script first. It installs Docker, creates the `deploy` user with your CI public key, hardens sshd, configures ufw (22/80/443), enables fail2ban + unattended-upgrades, creates `/opt/aegisremit`, the `aegisremit-web` docker network, and a 2 GB swap file.
+If you started from a fresh Ubuntu 24.04 image, run the idempotent bootstrap script first. It installs Docker, creates the `deploy` user with your CI public key, hardens sshd, configures ufw (22/80/443), enables fail2ban + unattended-upgrades, creates `/opt/aegisremit`, the `aegisremit-web` and `aegisremit-internal` docker networks, the shared `aegisremit-sftp-data` volume, and a 2 GB swap file.
 
 ```bash
 # Upload the script to the VPS (from your Windows machine)
@@ -221,7 +217,7 @@ Verify files are there:
 ls -la
 ```
 
-✅ You should see: docker-compose.yml, .env.example, config/, setup/, scripts/, etc.
+✅ You should see: traefik/, infra/, apps/, .env.example, otel-collector-config.yaml, scripts/, etc.
 
 ### Step 3.3 — Create .env file with real secrets
 
@@ -304,26 +300,42 @@ cat otel-collector-config.yaml
 
 ✅ Should show the OTLP receiver/exporter config.
 
-### Step 3.5 — Start infrastructure services FIRST
+### Step 3.5 — Start Traefik first
 
-Don't start everything at once. Start the dependencies first:
+Start the reverse proxy stack before anything else:
 
 ```bash
-docker compose up -d traefik redis rabbitmq minio otel-collector
+cd /opt/aegisremit/traefik
+docker compose --env-file ../.env up -d
+```
+
+Wait 30 seconds, then check Traefik is healthy:
+
+```bash
+docker compose --env-file ../.env ps
+```
+
+✅ Traefik should show "running".
+
+### Step 3.5b — Start infrastructure services
+
+```bash
+cd /opt/aegisremit/infra
+docker compose --env-file ../.env up -d
 ```
 
 Wait 30 seconds, then check all are healthy:
 
 ```bash
-docker compose ps
+docker compose --env-file ../.env ps
 ```
 
-✅ All 5 services should show "running" or "healthy".
+✅ All 5 infrastructure services (redis, rabbitmq, minio, otel-collector, sftpgo) should show "running" or "healthy".
 
 If any service shows "restarting" or "exited", check logs:
 
 ```bash
-docker compose logs <service-name>
+docker compose --env-file ../.env logs <service-name>
 ```
 
 ### Step 3.6 — Verify Traefik + SSL
@@ -331,7 +343,8 @@ docker compose logs <service-name>
 Check if Traefik can reach Cloudflare for SSL:
 
 ```bash
-docker compose logs traefik | grep -i "acme\|certificate\|error"
+cd /opt/aegisremit/traefik
+docker compose --env-file ../.env logs traefik | grep -i "acme\|certificate\|error"
 ```
 
 Test the Traefik dashboard:
@@ -409,8 +422,9 @@ If you haven't built and pushed Docker images yet, SKIP this step.
 If images are available:
 
 ```bash
-docker compose up -d portal-api erp-api sftp-api admin
-docker compose ps
+cd /opt/aegisremit/apps
+docker compose --env-file ../.env up -d
+docker compose --env-file ../.env ps
 ```
 
 ---
@@ -522,7 +536,10 @@ git push origin main
 Watch the pipeline:
 1. Go to https://github.com/Vantroxia-Labs/remit/actions → CI should run
 2. After CI finishes → https://github.com/Vantroxia-Labs/infra/actions → Deploy should trigger
-3. SSH to VPS and verify: `docker compose ps`
+3. SSH to VPS and verify:
+   ```bash
+   cd /opt/aegisremit/apps && docker compose --env-file ../.env ps
+   ```
 
 ✅ All services running with new images.
 
@@ -553,11 +570,13 @@ curl -I https://aegisremit.ng
 Run these from the VPS:
 
 ```bash
-# All containers running
-docker compose ps
+# All containers running (check each stack)
+cd /opt/aegisremit/traefik && docker compose --env-file ../.env ps
+cd /opt/aegisremit/infra   && docker compose --env-file ../.env ps
+cd /opt/aegisremit/apps    && docker compose --env-file ../.env ps
 
 # No restart loops
-docker compose ps --format "{{.Name}} {{.Status}}" | grep -i restart
+docker ps --format "{{.Names}} {{.Status}}" | grep -i restart
 
 # Disk usage is reasonable
 df -h /
