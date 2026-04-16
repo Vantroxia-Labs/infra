@@ -1,73 +1,20 @@
 ##############################################################################
-# AegisRemit — Infrastructure Services (docker-compose.yml)
+# AegisRemit — Infrastructure Services (infra/docker-compose.yml)
 # Target: Contabo Cloud VPS 10 (4 vCPU / 8GB RAM / 75GB NVMe)
-# Region: EU Region
 # Domain: aegisremit.ng (via Cloudflare DNS)
-# Database: Aiven Cloud PostgreSQL (external)
 #
-# This file contains ONLY infrastructure services.
-# Application services live in docker-compose.apps.yml.
+# This file contains ONLY infrastructure services:
+#   Redis, RabbitMQ, MinIO, OpenTelemetry Collector, SFTPGo
+#
+# Traefik lives in ../traefik/docker-compose.yml
+# Application services live in ../apps/docker-compose.yml
 #
 # Usage:
-#   Infra only:  docker compose up -d
-#   Full stack:  docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d
+#   cd /opt/aegisremit/infra
+#   docker compose --env-file ../.env up -d
 ##############################################################################
 
 services:
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # REVERSE PROXY — Traefik v3
-  # ═══════════════════════════════════════════════════════════════════════════
-  traefik:
-    image: traefik:v3.1
-    container_name: traefik
-    restart: unless-stopped
-    command:
-      - --api.dashboard=true
-      - --providers.docker=true
-      - --providers.docker.exposedByDefault=false
-      - --entrypoints.web.address=:80
-      - --entrypoints.websecure.address=:443
-      # HTTP -> HTTPS redirect
-      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      # Let's Encrypt via Cloudflare DNS challenge
-      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
-      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
-      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
-      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
-      # Access log
-      - --accesslog=true
-      - --accesslog.filepath=/var/log/traefik/access.log
-      # Metrics for SigNoz
-      - --metrics.openTelemetry=true
-      - --metrics.openTelemetry.address=otel-collector:4318
-      - --metrics.openTelemetry.insecure=true
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik-certs:/letsencrypt
-      - traefik-logs:/var/log/traefik
-    networks:
-      - web
-      - internal
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-    labels:
-      # Traefik dashboard at traefik.aegisremit.ng (protected by BasicAuth)
-      - traefik.enable=true
-      - traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN}`)
-      - traefik.http.routers.dashboard.entrypoints=websecure
-      - traefik.http.routers.dashboard.tls.certresolver=letsencrypt
-      - traefik.http.routers.dashboard.service=api@internal
-      - traefik.http.routers.dashboard.middlewares=auth
-      - traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}
 
   # ═══════════════════════════════════════════════════════════════════════════
   # CACHE — Redis 7
@@ -171,7 +118,7 @@ services:
     restart: unless-stopped
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
-      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+      - ../otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     networks:
       - internal
     deploy:
@@ -184,8 +131,8 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   # SFTP SERVER — SFTPGo v2
   # Managed SFTP server with REST API for user provisioning.
-  # External auth delegates credential checks to sftp-api (apps compose).
-  # NOTE: SFTP auth requires sftp-api to be running (from docker-compose.apps.yml).
+  # External auth delegates credential checks to sftp-api (apps stack).
+  # NOTE: SFTP auth requires sftp-api to be running (from apps/docker-compose.yml).
   # ═══════════════════════════════════════════════════════════════════════════
   sftpgo:
     image: sftpgo/sftpgo:v2
@@ -205,9 +152,9 @@ services:
       - SFTPGO_HTTPD__BINDINGS__0__ENABLE_WEB_ADMIN=true
       - SFTPGO_HTTPD__BINDINGS__0__ENABLE_WEB_CLIENT=false
       - SFTPGO_HTTPD__BINDINGS__0__ENABLE_REST_API=true
-      # Data provider — in-memory; auth delegated to sftp-api
+      # Data provider — in-memory; auth delegated to sftp-api (in apps stack, uses container name)
       - SFTPGO_DATA_PROVIDER__DRIVER=memory
-      - SFTPGO_DATA_PROVIDER__EXTERNAL_AUTH_HOOK=http://sftp-api:8080/api/sftp-auth/check-credentials
+      - SFTPGO_DATA_PROVIDER__EXTERNAL_AUTH_HOOK=http://aegisremit-sftp-api:8080/api/sftp-auth/check-credentials
       - SFTPGO_DATA_PROVIDER__EXTERNAL_AUTH_SCOPE=1
       - SFTPGO_DATA_PROVIDER__CREATE_DEFAULT_DIR=true
       # General
@@ -240,14 +187,15 @@ services:
       - traefik.http.services.sftpgo.loadbalancer.server.port=8080
 
 # ═════════════════════════════════════════════════════════════════════════════
-# NETWORKS
+# NETWORKS — created externally by bootstrap-vps.sh
 # ═════════════════════════════════════════════════════════════════════════════
 networks:
   web:
     name: aegisremit-web
+    external: true
   internal:
     name: aegisremit-internal
-    internal: true   # No external access — services talk only via Traefik
+    external: true
 
 # ═════════════════════════════════════════════════════════════════════════════
 # VOLUMES
@@ -256,7 +204,7 @@ volumes:
   redis-data:
   rabbitmq-data:
   minio-data:
-  traefik-certs:
-  traefik-logs:
   sftp-data:
+    name: aegisremit-sftp-data
+    external: true
   sftpgo-backups:

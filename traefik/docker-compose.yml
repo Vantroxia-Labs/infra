@@ -1,0 +1,87 @@
+##############################################################################
+# AegisRemit — Traefik Reverse Proxy (traefik/docker-compose.yml)
+# Target: Contabo Cloud VPS 10 (4 vCPU / 8GB RAM / 75GB NVMe)
+# Domain: aegisremit.ng (via Cloudflare DNS)
+#
+# This file contains ONLY the Traefik edge router.
+# Infrastructure services live in ../infra/docker-compose.yml
+# Application services live in ../apps/docker-compose.yml
+#
+# Usage:
+#   cd /opt/aegisremit/traefik
+#   docker compose --env-file ../.env up -d
+##############################################################################
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # REVERSE PROXY — Traefik v3
+  # ═══════════════════════════════════════════════════════════════════════════
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedByDefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # HTTP -> HTTPS redirect
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # Let's Encrypt via Cloudflare DNS challenge
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # Access log
+      - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik/access.log
+      # Metrics for SigNoz (uses container name — otel-collector is in infra stack)
+      - --metrics.openTelemetry=true
+      - --metrics.openTelemetry.address=aegisremit-otel-collector:4318
+      - --metrics.openTelemetry.insecure=true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+      - traefik-logs:/var/log/traefik
+    networks:
+      - web
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    labels:
+      # Traefik dashboard at traefik.aegisremit.ng (protected by BasicAuth)
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN}`)
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.tls.certresolver=letsencrypt
+      - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.routers.dashboard.middlewares=auth
+      - traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# NETWORKS — created externally by bootstrap-vps.sh
+# ═════════════════════════════════════════════════════════════════════════════
+networks:
+  web:
+    name: aegisremit-web
+    external: true
+  internal:
+    name: aegisremit-internal
+    external: true
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VOLUMES
+# ═════════════════════════════════════════════════════════════════════════════
+volumes:
+  traefik-certs:
+  traefik-logs:
