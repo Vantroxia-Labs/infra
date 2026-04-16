@@ -27,6 +27,8 @@ on:
           - erp-api
           - sftp-api
           - admin
+          - infra
+          - traefik
       image_tag:
         description: 'Image tag (default: latest)'
         required: false
@@ -72,10 +74,6 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            cd ${{ env.DEPLOY_DIR }}
-
-            # Compose file references
-            APPS="-f docker-compose.yml -f docker-compose.apps.yml"
 
             # Log in to GitHub Container Registry
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -88,47 +86,48 @@ jobs:
             echo "  Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "═══════════════════════════════════════════"
 
+            # Helper function for targeted deployments
             deploy_service() {
               local svc=$1
-              echo "→ Pulling $svc..."
-              docker compose $APPS pull "$svc"
-              echo "→ Restarting $svc..."
-              docker compose $APPS up -d --no-deps "$svc"
+              local dir=$2
+              echo "→ Deploying $svc in $dir..."
+              cd ${{ env.DEPLOY_DIR }}/$dir
+              docker compose --env-file ../.env pull "$svc"
+              docker compose --env-file ../.env up -d --no-deps "$svc"
               echo "→ Waiting for $svc health..."
               sleep 5
-              docker compose $APPS ps "$svc"
+              docker compose --env-file ../.env ps "$svc"
             }
 
             export IMAGE_TAG="$TAG"
 
             case "$SERVICE" in
-              portal-api)
-                deploy_service portal-api
-                ;;
-              erp-api)
-                deploy_service erp-api
-                ;;
-              sftp-api)
-                deploy_service sftp-api
-                ;;
-              admin)
-                deploy_service admin
+              portal-api|erp-api|sftp-api|admin)
+                deploy_service "$SERVICE" "apps"
                 ;;
               all-apis)
-                echo "→ Pulling all API images..."
-                docker compose $APPS pull portal-api erp-api sftp-api
-                echo "→ Restarting all APIs..."
-                docker compose $APPS up -d --no-deps portal-api erp-api sftp-api
+                cd ${{ env.DEPLOY_DIR }}/apps
+                docker compose --env-file ../.env pull portal-api erp-api sftp-api
+                docker compose --env-file ../.env up -d --no-deps portal-api erp-api sftp-api
                 sleep 5
-                docker compose $APPS ps
+                docker compose --env-file ../.env ps
                 ;;
               all)
-                echo "→ Pulling all application images..."
-                docker compose $APPS pull portal-api erp-api sftp-api admin
-                echo "→ Restarting application services..."
-                docker compose $APPS up -d --no-deps portal-api erp-api sftp-api admin
+                cd ${{ env.DEPLOY_DIR }}/apps
+                docker compose --env-file ../.env pull portal-api erp-api sftp-api admin
+                docker compose --env-file ../.env up -d --no-deps portal-api erp-api sftp-api admin
                 sleep 5
-                docker compose $APPS ps
+                docker compose --env-file ../.env ps
+                ;;
+              infra)
+                cd ${{ env.DEPLOY_DIR }}/infra
+                docker compose --env-file ../.env pull
+                docker compose --env-file ../.env up -d
+                ;;
+              traefik)
+                cd ${{ env.DEPLOY_DIR }}/traefik
+                docker compose --env-file ../.env pull
+                docker compose --env-file ../.env up -d
                 ;;
             esac
 
@@ -153,6 +152,11 @@ jobs:
             curl -sf https://app.aegisremit.ng && echo " ✓ Admin healthy" || echo " ✗ Admin unhealthy"
             echo ""
             echo "── Running containers ──"
-            cd /opt/aegisremit && docker compose -f docker-compose.yml -f docker-compose.apps.yml ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+            echo "--- Traefik ---"
+            cd /opt/aegisremit/traefik && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+            echo "--- Infrastructure ---"
+            cd /opt/aegisremit/infra && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+            echo "--- Applications ---"
+            cd /opt/aegisremit/apps && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 
       # TODO: Add Slack/Discord notification on success/failure

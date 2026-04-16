@@ -43,7 +43,7 @@ usermod -aG docker deploy
 apt install -y docker-compose-plugin
 
 # ── 7. Create project directory ───────────────────────────────────────────
-mkdir -p /opt/aegisremit
+mkdir -p /opt/aegisremit/{traefik,infra,apps}
 chown -R deploy:deploy /opt/aegisremit
 
 # ── 8. Swap (safety net on 8GB box) ──────────────────────────────────────
@@ -68,5 +68,8 @@ echo "  Next steps:"
 echo "  1. Log in as: ssh deploy@YOUR_VPS_IP"
 echo "  2. Copy files to /opt/aegisremit/"
 echo "  3. Create .env from .env.example"
-echo "  4. Run: docker compose up -d"
+echo "  4. Start each stack in order:"
+echo "     cd /opt/aegisremit/traefik && docker compose --env-file ../.env up -d"
+echo "     cd /opt/aegisremit/infra   && docker compose --env-file ../.env up -d"
+echo "     cd /opt/aegisremit/apps    && docker compose --env-file ../.env up -d"
 echo "══════════════════════════════════════════"
