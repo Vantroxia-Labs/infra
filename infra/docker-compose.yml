@@ -137,7 +137,7 @@ services:
   #   to validate credentials. If sftp-api is down, SFTP logins will fail.
   # ═══════════════════════════════════════════════════════════════════════════
   sftpgo:
-    image: sftpgo/sftpgo:v2
+    image: drakkan/sftpgo:v2
     container_name: aegisremit-sftpgo
     restart: unless-stopped
     ports:

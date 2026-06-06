@@ -18,7 +18,7 @@ services:
   # REVERSE PROXY — Traefik v3
   # ═══════════════════════════════════════════════════════════════════════════
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
     command:
@@ -38,10 +38,16 @@ services:
       # Access log
       - --accesslog=true
       - --accesslog.filepath=/var/log/traefik/access.log
-      # Metrics for SigNoz (uses container name — otel-collector is in infra stack)
-      - --metrics.openTelemetry=true
-      - --metrics.openTelemetry.address=aegisremit-otel-collector:4318
-      - --metrics.openTelemetry.insecure=true
+      # Metrics for SigNoz (OTLP gRPC)
+      - --metrics.otlp=true
+      - --metrics.otlp.grpc=true
+      - --metrics.otlp.grpc.endpoint=otel-collector:4317
+      - --metrics.otlp.grpc.insecure=true
+      # Traces -> Opentelemetry Collector (OTLP gRPC)
+      - --tracing.otlp=true
+      - --tracing.otlp.grpc=true
+      - --tracing.otlp.grpc.endpoint=otel-collector:4317
+      - --tracing.otlp.grpc.insecure=true
     ports:
       - "80:80"
       - "443:443"
