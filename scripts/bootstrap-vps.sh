@@ -131,7 +131,8 @@ else
 fi
 
 # ── 10. Shared Docker volumes ─────────────────────────────────────────────
-# sftp-data is shared between infra (sftpgo) and apps (sftp-api)
+# sftp-data is used by SFTPGo (infra stack). It was previously shared with the
+# apps sftp-api service, which is no longer deployed.
 if ! docker volume inspect "$SFTP_DATA_VOLUME" >/dev/null 2>&1; then
     log "Creating shared volume '$SFTP_DATA_VOLUME'..."
     docker volume create "$SFTP_DATA_VOLUME"

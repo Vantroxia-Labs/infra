@@ -15,15 +15,20 @@ CONTAINER="aegisremit-postgres"
 
 cd "$COMPOSE_DIR"
 
-# Load env vars
-source .env
+# Load just the Postgres vars we need. Avoid `source .env` — the file contains
+# values with special characters (e.g. the $$-escaped Traefik hash) that are
+# unsafe to source directly.
+POSTGRES_USER=$(grep -E '^POSTGRES_USER=' .env | head -1 | cut -d= -f2-)
+POSTGRES_DB=$(grep -E '^POSTGRES_DB=' .env | head -1 | cut -d= -f2-)
+: "${POSTGRES_USER:?POSTGRES_USER not set in .env}"
+: "${POSTGRES_DB:?POSTGRES_DB not set in .env}"
 
 case "${1:-help}" in
   backup)
     FILENAME="aegisremit_$(date +%Y%m%d_%H%M%S).sql.gz"
     echo "→ Creating backup: $FILENAME"
     mkdir -p "$BACKUP_DIR"
-    docker exec "$CONTAINER" pg_dump -U "$PG_USER" -d aegisremit | gzip > "$BACKUP_DIR/$FILENAME"
+    docker exec "$CONTAINER" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" | gzip > "$BACKUP_DIR/$FILENAME"
     echo "✓ Backup saved: $BACKUP_DIR/$FILENAME ($(du -h "$BACKUP_DIR/$FILENAME" | cut -f1))"
 
     # Keep only last 14 backups
@@ -49,13 +54,13 @@ case "${1:-help}" in
     fi
 
     echo "→ Stopping application services..."
-    docker compose --env-file /opt/aegisremit/.env -f /opt/aegisremit/apps/docker-compose.yml stop portal-api erp-api sftp-api
+    docker compose --env-file /opt/aegisremit/.env -f /opt/aegisremit/apps/docker-compose.yml stop portal-api erp-api
 
     echo "→ Restoring from $FILE..."
-    gunzip -c "$FILE" | docker exec -i "$CONTAINER" psql -U "$PG_USER" -d aegisremit
+    gunzip -c "$FILE" | docker exec -i "$CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
     echo "→ Restarting application services..."
-    docker compose --env-file /opt/aegisremit/.env -f /opt/aegisremit/apps/docker-compose.yml start portal-api erp-api sftp-api
+    docker compose --env-file /opt/aegisremit/.env -f /opt/aegisremit/apps/docker-compose.yml start portal-api erp-api
 
     echo "✓ Restore complete"
     ;;
