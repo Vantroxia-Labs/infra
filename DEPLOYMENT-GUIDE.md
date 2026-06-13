@@ -17,17 +17,17 @@
            API    API  API  (nginx) (Traefik)
               └────┴────┴────┘
                    │    Internal Network
-           ┌──────┼──────┬──────────┬──────┐
-         Redis  RabbitMQ  MinIO   SFTPGo  OTEL
-                   │
-           Aiven Cloud PostgreSQL (external)
+        ┌─────┬────┼────┬────────┬──────┐
+   Postgres Redis RabbitMQ MinIO SFTPGo OTEL
 ```
 
 **Stacks (physically segregated):**
 - `traefik/` — Traefik v3.1 (reverse proxy, TLS)
-- `infra/` — Redis 7, RabbitMQ 3.13, MinIO, SFTPGo, OTEL Collector
-- `apps/` — 3 x .NET 10 Web APIs (Portal, ERP, SFTP) + React admin (nginx)
-- Database: Aiven Cloud PostgreSQL (external, not on VPS)
+- `infra/` — PostgreSQL 17, Redis 7, RabbitMQ 3.13, MinIO, SFTPGo, OTEL Collector
+- `apps/` — 2 x .NET 10 Web APIs (Portal, ERP) + React admin (nginx). SFTP API is not deployed.
+- Database: **self-hosted PostgreSQL 17** in the `infra/` stack (container `aegisremit-postgres`,
+  internal-only, volume `aegisremit-postgres-data`). Aiven remains available as an optional
+  fallback — see `.env.example`.
 
 ---
 
@@ -122,10 +122,9 @@ Click "Add record" for each row below:
 | 2 | A     | app        | 207.180.197.64 | Off    |
 | 3 | A     | api        | 207.180.197.64 | Off    |
 | 4 | A     | erp        | 207.180.197.64 | Off    |
-| 5 | A     | sftp-api   | 207.180.197.64 | Off    |
-| 6 | A     | traefik    | 207.180.197.64 | Off    |
-| 7 | A     | rabbitmq   | 207.180.197.64 | Off    |
-| 8 | A     | minio      | 207.180.197.64 | Off    |
+| 5 | A     | traefik    | 207.180.197.64 | Off    |
+| 6 | A     | rabbitmq   | 207.180.197.64 | Off    |
+| 7 | A     | minio      | 207.180.197.64 | Off    |
 | 9 | CNAME | www        | aegisremit.ng  | Off    |
 
 Proxy "On" = orange cloud icon.
@@ -245,7 +244,19 @@ echo "TRAEFIK_DASHBOARD_AUTH=$TRAEFIK_PASS"
 
 Copy that output line into .env.
 
-Generate strong passwords (run each one, copy output into .env):
+Generate the PostgreSQL password once and emit both lines that must share it
+(`POSTGRES_PASSWORD` and the password embedded in `DB_CONNECTION_STRING`):
+
+```bash
+PG_PASS=$(openssl rand -base64 24)
+echo "POSTGRES_PASSWORD=$PG_PASS"
+echo "DB_CONNECTION_STRING=Host=aegisremit-postgres;Port=5432;Database=aegisremit;Username=aegisremit;Password=$PG_PASS;Pooling=true"
+```
+
+> Keep `POSTGRES_DB`/`POSTGRES_USER` (default `aegisremit`/`aegisremit`) consistent with the
+> `Database=`/`Username=` in `DB_CONNECTION_STRING`.
+
+Generate the remaining strong passwords (run each one, copy output into .env):
 
 ```bash
 echo "REDIS_PASSWORD=$(openssl rand -base64 24)"
@@ -269,7 +280,10 @@ IMAGE_TAG=latest
 ACME_EMAIL=davidgodswill@gmail.com
 CF_DNS_API_TOKEN=abc123...your-cloudflare-token
 TRAEFIK_DASHBOARD_AUTH=admin:$$2y$$05$$...hashed-password
-AIVEN_CONNECTION_STRING=Host=your-host.aivencloud.com;Port=12345;Database=aegisremit;Username=avnadmin;Password=YOUR_AIVEN_PASSWORD;SslMode=Require;Trust Server Certificate=true
+POSTGRES_DB=aegisremit
+POSTGRES_USER=aegisremit
+POSTGRES_PASSWORD=<generated-password-0>
+DB_CONNECTION_STRING=Host=aegisremit-postgres;Port=5432;Database=aegisremit;Username=aegisremit;Password=<generated-password-0>;Pooling=true
 REDIS_PASSWORD=<generated-password-1>
 RABBITMQ_USER=aegisremit
 RABBITMQ_PASSWORD=<generated-password-2>
@@ -395,25 +409,36 @@ docker exec aegisremit-minio mc mb --ignore-existing local/documents
 
 ✅ 3 buckets created.
 
-### Step 3.8b — Run database migrations against Aiven (one-time, from your dev machine)
+### Step 3.8b — Run database migrations (one-time, via the migrator image)
 
-**Do this BEFORE Step 3.9.** Portal.API's auto-migrate on startup is gated on `ASPNETCORE_ENVIRONMENT=Development`, but in production the containers run as `Production`, so migrations will never be applied automatically. You must apply them once by hand from your local dev machine, pointed at the Aiven connection string.
+**Do this BEFORE Step 3.9.** Portal.API's auto-migrate on startup is gated on `ASPNETCORE_ENVIRONMENT=Development`; in production the containers run as `Production`, so migrations are **never applied automatically**. Migrations are applied by the dedicated **`remit-migrator`** image (a self-contained EF Core migration bundle built by the `remit` CI pipeline).
 
-On your Windows dev machine:
+**Automatic (normal path):** every deploy triggered by the `remit` CI — or a manual `deploy.sh` of `portal-api`/`erp-api`/`all-apis`/`apps`/`all` — runs the migrator one-shot against `aegisremit-postgres` *before* rolling the apps. You normally do nothing here.
 
-```powershell
-cd "C:\Users\PRECISION 5560\source\repos\AegisRemit\Remit\src\Presentation\AegisEInvoicing.Portal.API"
+**Manual one-shot (first bring-up, or to apply migrations without redeploying apps):** on the VPS, with the `infra/` stack (postgres) already running:
 
-# Set the same Aiven connection string that's in /opt/aegisremit/.env on the VPS
-$env:ConnectionStrings__DefaultConnection = "Host=your-host.aivencloud.com;Port=12345;Database=aegisremit;Username=avnadmin;Password=YOUR_AIVEN_PASSWORD;SslMode=Require;Trust Server Certificate=true"
+```bash
+# Pull the migrator built for the tag you're deploying (or :latest)
+docker login ghcr.io -u vantroxia-labs   # paste GHCR token
+docker pull ghcr.io/vantroxia-labs/remit-migrator:latest
 
-# Apply all pending migrations (requires dotnet-ef tool: dotnet tool install -g dotnet-ef)
-dotnet ef database update --project ../../Infrastructure/AegisEInvoicing.Infrastructure
+# Read the connection string from .env and apply all pending migrations
+DB_CONN=$(grep -E '^DB_CONNECTION_STRING=' /opt/aegisremit/.env | head -1 | cut -d= -f2-)
+docker run --rm --network aegisremit-internal \
+    -e "ConnectionStrings__DefaultConnection=$DB_CONN" \
+    ghcr.io/vantroxia-labs/remit-migrator:latest
 ```
 
-✅ You should see `Done.` with no errors. Verify in the Aiven console that the tables were created.
+✅ The migrator exits `0` after applying migrations (idempotent — safe to re-run). Verify:
 
-> **Repeat this step whenever a new EF migration is added to Portal.API before deploying the update.** If you ever hit a `relation "…" does not exist` error in production logs, that's the signal you forgot this step.
+```bash
+docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" aegisremit-postgres \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c '\dt' | head
+```
+
+> New EF migrations are picked up automatically: each `remit` build produces a fresh
+> `remit-migrator` image, and the deploy pipeline runs it before the apps roll. If you ever
+> see `relation "…" does not exist` in production logs, run the manual one-shot above.
 
 ### Step 3.9 — Start application services (if images exist)
 
@@ -516,7 +541,8 @@ Copy from the infra repo to the correct locations:
 - Copy `ci-remit.yml` → `Vantroxia-Labs/remit/.github/workflows/ci.yml`
 - Copy `Dockerfile.portal-api` → `Vantroxia-Labs/remit/Dockerfile.portal-api`
 - Copy `Dockerfile.erp-api` → `Vantroxia-Labs/remit/Dockerfile.erp-api`
-- Copy `Dockerfile.sftp-api` → `Vantroxia-Labs/remit/Dockerfile.sftp-api`
+- Copy `Dockerfile.migrator` → `Vantroxia-Labs/remit/Dockerfile.migrator`
+- `Dockerfile.sftp-api` stays in the repo but is **not built or deployed**
 
 **For admin repo:**
 - Copy `ci-admin.yml` → `Vantroxia-Labs/admin/.github/workflows/ci.yml`
@@ -553,14 +579,12 @@ Run these from your local machine:
 # DNS resolves
 nslookup portal.aegisremit.ng
 nslookup erp.aegisremit.ng
-nslookup sftp-api.aegisremit.ng
 nslookup app.aegisremit.ng
 nslookup minio.aegisremit.ng
 
 # SSL + API health
 curl https://portal.aegisremit.ng/health
 curl https://erp.aegisremit.ng/health
-curl https://sftp-api.aegisremit.ng/health
 
 # Admin portal loads
 curl -I https://app.aegisremit.ng
@@ -596,7 +620,8 @@ Keep this list updated:
 | Domain     | aegisremit.ng (Whogohost)               | Renews Nov 2026             |
 | GitHub     | github.com/Vantroxia-Labs               | remit, admin, infra         |
 | GHCR       | ghcr.io/vantroxia-labs/*                | Docker images               |
-| Aiven      | console.aiven.io                        | PostgreSQL managed DB       |
+| PostgreSQL | aegisremit-postgres (infra/ stack)      | Self-hosted, internal-only  |
+| Aiven      | console.aiven.io                        | Optional DB fallback        |
 | Secrets    | /opt/aegisremit/.env on VPS             | NEVER commit to git         |
 
 ### Subdomain → Service Map
@@ -607,7 +632,6 @@ Keep this list updated:
 | app.aegisremit.ng            | admin        | 80   |
 | portal.aegisremit.ng         | portal-api   | 8080 |
 | erp.aegisremit.ng            | erp-api      | 8080 |
-| sftp-api.aegisremit.ng       | sftp-api     | 8080 |
 | minio.aegisremit.ng          | minio        | 9001 |
 | rabbitmq.aegisremit.ng       | rabbitmq     | 15672|
 | traefik.aegisremit.ng        | traefik      | 8080 |

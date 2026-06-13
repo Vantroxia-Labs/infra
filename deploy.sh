@@ -45,26 +45,46 @@ deploy_service() {
   docker compose $ENV_FILE ps "$svc"
 }
 
+# Apply EF Core migrations as a one-shot before rolling DB-backed apps.
+# Production APIs do NOT auto-migrate. Connects to aegisremit-postgres over the
+# internal network, so the infra stack (postgres) must already be running.
+run_migrations() {
+  echo ""
+  echo "→ Applying database migrations (remit-migrator:$TAG)..."
+  local db_conn
+  db_conn=$(grep -E '^DB_CONNECTION_STRING=' "${BASE_DIR}/.env" | head -1 | cut -d= -f2-)
+  if [ -z "$db_conn" ]; then
+    echo "✗ DB_CONNECTION_STRING not found in ${BASE_DIR}/.env"
+    exit 1
+  fi
+  docker pull "ghcr.io/vantroxia-labs/remit-migrator:$TAG"
+  docker run --rm --network aegisremit-internal \
+    -e "ConnectionStrings__DefaultConnection=$db_conn" \
+    "ghcr.io/vantroxia-labs/remit-migrator:$TAG"
+  echo "→ Migrations applied successfully."
+}
+
 case "$SERVICE" in
-  portal-api)  deploy_service portal-api apps ;;
-  erp-api)     deploy_service erp-api apps ;;
-  sftp-api)    deploy_service sftp-api apps ;;
+  portal-api)  run_migrations; deploy_service portal-api apps ;;
+  erp-api)     run_migrations; deploy_service erp-api apps ;;
   admin)       deploy_service admin apps ;;
   all-apis)
+    run_migrations
     cd "$BASE_DIR/apps"
     echo "→ Pulling all API images..."
-    docker compose $ENV_FILE pull portal-api erp-api sftp-api
+    docker compose $ENV_FILE pull portal-api erp-api
     echo "→ Restarting all APIs..."
-    docker compose $ENV_FILE up -d --no-deps portal-api erp-api sftp-api
+    docker compose $ENV_FILE up -d --no-deps portal-api erp-api
     sleep 5
     docker compose $ENV_FILE ps
     ;;
   apps)
+    run_migrations
     cd "$BASE_DIR/apps"
     echo "→ Pulling all application images..."
-    docker compose $ENV_FILE pull portal-api erp-api sftp-api admin
+    docker compose $ENV_FILE pull portal-api erp-api admin
     echo "→ Restarting all application services..."
-    docker compose $ENV_FILE up -d --no-deps portal-api erp-api sftp-api admin
+    docker compose $ENV_FILE up -d --no-deps portal-api erp-api admin
     sleep 5
     docker compose $ENV_FILE ps
     ;;
@@ -90,6 +110,10 @@ case "$SERVICE" in
     echo "→ Updating infrastructure..."
     docker compose $ENV_FILE pull
     docker compose $ENV_FILE up -d
+    echo "→ Waiting for postgres to be ready..."
+    sleep 10
+
+    run_migrations
 
     cd "$BASE_DIR/apps"
     echo "→ Updating applications..."
@@ -98,7 +122,7 @@ case "$SERVICE" in
     ;;
   *)
     echo "Unknown service: $SERVICE"
-    echo "Valid options: portal-api, erp-api, sftp-api, admin, all-apis, apps, infra, traefik, all"
+    echo "Valid options: portal-api, erp-api, admin, all-apis, apps, infra, traefik, all"
     exit 1
     ;;
 esac
@@ -116,7 +140,6 @@ echo ""
 echo "── Health checks ──"
 curl -sf https://api.aegisremit.ng/health 2>/dev/null && echo " ✓ Portal API healthy" || echo " ✗ Portal API unreachable"
 curl -sf https://erp.aegisremit.ng/health 2>/dev/null && echo " ✓ ERP API healthy" || echo " ✗ ERP API unreachable"
-curl -sf https://sftp-api.aegisremit.ng/health 2>/dev/null && echo " ✓ SFTP API healthy" || echo " ✗ SFTP API unreachable"
 curl -sf https://app.aegisremit.ng 2>/dev/null && echo " ✓ Admin healthy" || echo " ✗ Admin unreachable"
 echo ""
 echo "── Running containers ──"

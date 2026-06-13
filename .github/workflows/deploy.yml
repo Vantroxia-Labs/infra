@@ -25,7 +25,6 @@ on:
           - all-apis
           - portal-api
           - erp-api
-          - sftp-api
           - admin
           - infra
           - traefik
@@ -99,23 +98,48 @@ jobs:
               docker compose --env-file ../.env ps "$svc"
             }
 
+            # Apply EF Core migrations as a one-shot before rolling DB-backed
+            # apps. Production APIs do NOT auto-migrate, so this is required.
+            # Connects to aegisremit-postgres over the internal network; the
+            # infra stack (postgres) must already be running.
+            run_migrations() {
+              echo "→ Applying database migrations (remit-migrator:$TAG)..."
+              local db_conn
+              db_conn=$(grep -E '^DB_CONNECTION_STRING=' ${{ env.DEPLOY_DIR }}/.env | head -1 | cut -d= -f2-)
+              if [ -z "$db_conn" ]; then
+                echo "✗ DB_CONNECTION_STRING not found in ${{ env.DEPLOY_DIR }}/.env"
+                exit 1
+              fi
+              docker pull ghcr.io/vantroxia-labs/remit-migrator:$TAG
+              docker run --rm --network aegisremit-internal \
+                -e "ConnectionStrings__DefaultConnection=$db_conn" \
+                ghcr.io/vantroxia-labs/remit-migrator:$TAG
+              echo "→ Migrations applied successfully."
+            }
+
             export IMAGE_TAG="$TAG"
 
             case "$SERVICE" in
-              portal-api|erp-api|sftp-api|admin)
+              portal-api|erp-api)
+                run_migrations
+                deploy_service "$SERVICE" "apps"
+                ;;
+              admin)
                 deploy_service "$SERVICE" "apps"
                 ;;
               all-apis)
+                run_migrations
                 cd ${{ env.DEPLOY_DIR }}/apps
-                docker compose --env-file ../.env pull portal-api erp-api sftp-api
-                docker compose --env-file ../.env up -d --no-deps portal-api erp-api sftp-api
+                docker compose --env-file ../.env pull portal-api erp-api
+                docker compose --env-file ../.env up -d --no-deps portal-api erp-api
                 sleep 5
                 docker compose --env-file ../.env ps
                 ;;
               all)
+                run_migrations
                 cd ${{ env.DEPLOY_DIR }}/apps
-                docker compose --env-file ../.env pull portal-api erp-api sftp-api admin
-                docker compose --env-file ../.env up -d --no-deps portal-api erp-api sftp-api admin
+                docker compose --env-file ../.env pull portal-api erp-api admin
+                docker compose --env-file ../.env up -d --no-deps portal-api erp-api admin
                 sleep 5
                 docker compose --env-file ../.env ps
                 ;;
@@ -148,7 +172,6 @@ jobs:
             echo "── Health checks ──"
             curl -sf https://api.aegisremit.ng/health && echo " ✓ Portal API healthy" || echo " ✗ Portal API unhealthy"
             curl -sf https://erp.aegisremit.ng/health && echo " ✓ ERP API healthy" || echo " ✗ ERP API unhealthy"
-            curl -sf https://sftp-api.aegisremit.ng/health && echo " ✓ SFTP API healthy" || echo " ✗ SFTP API unhealthy"
             curl -sf https://app.aegisremit.ng && echo " ✓ Admin healthy" || echo " ✗ Admin unhealthy"
             echo ""
             echo "── Running containers ──"
