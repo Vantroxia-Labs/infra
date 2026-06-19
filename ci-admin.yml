@@ -36,6 +36,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Release gate checks
+        run: npm run release:gate
+        env:
+          VITE_API_BASE_URL: https://api.aegisremit.ng/api/v1
+          VITE_USE_MOCK: "false"
+
       - name: Build
         run: npm run build
         env:

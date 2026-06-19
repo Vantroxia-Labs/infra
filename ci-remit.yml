@@ -40,6 +40,11 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
 
+      - name: Release gate checks (config + secrets)
+        run: |
+          chmod +x ./scripts/release-gate.sh
+          ./scripts/release-gate.sh
+
       # TODO: Uncomment when test coverage is stable
       # - name: Check coverage threshold
       #   run: |
@@ -79,6 +84,11 @@ jobs:
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "sha_tag=$SHA" >> $GITHUB_OUTPUT
           echo "date_tag=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+
+      - name: Strict parity gate
+        run: |
+          chmod +x ./scripts/release-gate.sh
+          STRICT_PARITY_GATE=true ./scripts/release-gate.sh
 
       # ── Portal API Image ──────────────────────────────────────────────
       - name: Build and push Portal API image
