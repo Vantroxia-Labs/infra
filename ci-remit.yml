@@ -15,7 +15,8 @@ env:
   REGISTRY: ghcr.io
   PORTAL_API_IMAGE: ghcr.io/vantroxia-labs/remit-portal-api
   ERP_API_IMAGE: ghcr.io/vantroxia-labs/remit-erp-api
-  SFTP_API_IMAGE: ghcr.io/vantroxia-labs/remit-sftp-api
+  MIGRATOR_IMAGE: ghcr.io/vantroxia-labs/remit-migrator
+  # NOTE: SFTP API is not deployed (uploads go via admin → Portal → NRS).
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
@@ -114,17 +115,17 @@ jobs:
             ${{ env.ERP_API_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
             ${{ env.ERP_API_IMAGE }}:${{ steps.tags.outputs.date_tag }}
 
-      # ── SFTP API Image ────────────────────────────────────────────────
-      - name: Build and push SFTP API image
+      # ── DB Migrator Image (EF bundle, run before apps roll) ────────────
+      - name: Build and push DB migrator image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile.sftp-api
+          file: ./Dockerfile.migrator
           push: true
           tags: |
-            ${{ env.SFTP_API_IMAGE }}:latest
-            ${{ env.SFTP_API_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
-            ${{ env.SFTP_API_IMAGE }}:${{ steps.tags.outputs.date_tag }}
+            ${{ env.MIGRATOR_IMAGE }}:latest
+            ${{ env.MIGRATOR_IMAGE }}:${{ steps.tags.outputs.sha_tag }}
+            ${{ env.MIGRATOR_IMAGE }}:${{ steps.tags.outputs.date_tag }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # Step 3: Trigger deployment in infra repo

@@ -17,6 +17,40 @@
 services:
 
   # ═══════════════════════════════════════════════════════════════════════════
+  # DATABASE — PostgreSQL 17 (self-hosted)
+  # Internal-only: no host port published, not routed through Traefik.
+  # container_name matches what db.sh expects (aegisremit-postgres) so the
+  # backup/restore helper works without changes.
+  # The apps connect via Host=aegisremit-postgres on the internal network.
+  # ═══════════════════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:17-alpine
+    container_name: aegisremit-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      # Locale/encoding for a fresh cluster
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - traefik.enable=false
+
+  # ═══════════════════════════════════════════════════════════════════════════
   # CACHE — Redis 7
   # ═══════════════════════════════════════════════════════════════════════════
   redis:
@@ -131,10 +165,12 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   # SFTP SERVER — SFTPGo v2
   # Managed SFTP server with REST API for user provisioning.
-  # External auth delegates credential checks to sftp-api (apps stack).
-  # ⚠ IMPORTANT: The apps stack (apps/docker-compose.yml) MUST be running
-  #   for SFTP authentication to work. SFTPGo calls aegisremit-sftp-api:8080
-  #   to validate credentials. If sftp-api is down, SFTP logins will fail.
+  # ⚠ AUTH CURRENTLY NON-FUNCTIONAL: SFTPGo's external-auth hook below points at
+  #   aegisremit-sftp-api, which is NO LONGER DEPLOYED (invoices are uploaded via
+  #   the admin UI and pushed to NRS by the Portal API). SFTPGo starts and the
+  #   Web Admin is reachable, but SFTP *logins will fail* until a new auth
+  #   provider is wired (replace the EXTERNAL_AUTH_HOOK, or switch DATA_PROVIDER
+  #   to a real backend with local users). Kept running per deployment decision.
   # ═══════════════════════════════════════════════════════════════════════════
   sftpgo:
     image: drakkan/sftpgo:v2
@@ -154,7 +190,8 @@ services:
       - SFTPGO_HTTPD__BINDINGS__0__ENABLE_WEB_ADMIN=true
       - SFTPGO_HTTPD__BINDINGS__0__ENABLE_WEB_CLIENT=false
       - SFTPGO_HTTPD__BINDINGS__0__ENABLE_REST_API=true
-      # Data provider — in-memory; auth delegated to sftp-api (in apps stack, uses container name)
+      # Data provider — in-memory; external auth hook below targets the removed
+      # sftp-api (see warning above). Update this when wiring a new auth method.
       - SFTPGO_DATA_PROVIDER__DRIVER=memory
       - SFTPGO_DATA_PROVIDER__EXTERNAL_AUTH_HOOK=http://aegisremit-sftp-api:8080/api/sftp-auth/check-credentials
       - SFTPGO_DATA_PROVIDER__EXTERNAL_AUTH_SCOPE=1
@@ -203,6 +240,8 @@ networks:
 # VOLUMES
 # ═════════════════════════════════════════════════════════════════════════════
 volumes:
+  postgres-data:
+    name: aegisremit-postgres-data
   redis-data:
   rabbitmq-data:
   minio-data:
