@@ -41,12 +41,14 @@ jobs:
         env:
           VITE_API_BASE_URL: https://api.aegisremit.ng/api/v1
           VITE_USE_MOCK: "false"
+          VITE_PAYLOAD_ENCRYPTION_KEY: ${{ secrets.PAYLOAD_ENCRYPTION_KEY }}
 
       - name: Build
         run: npm run build
         env:
           VITE_API_BASE_URL: https://api.aegisremit.ng/api/v1
           VITE_USE_MOCK: "false"
+          VITE_PAYLOAD_ENCRYPTION_KEY: ${{ secrets.PAYLOAD_ENCRYPTION_KEY }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # Step 2: Build + Push Docker Image (only on main push)
@@ -87,6 +89,7 @@ jobs:
           build-args: |
             VITE_API_BASE_URL=https://api.aegisremit.ng/api/v1
             VITE_USE_MOCK=false
+            VITE_PAYLOAD_ENCRYPTION_KEY=${{ secrets.PAYLOAD_ENCRYPTION_KEY }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # Step 3: Trigger deployment in infra repo

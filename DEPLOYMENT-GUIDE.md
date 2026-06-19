@@ -270,6 +270,7 @@ Generate the JWT signing secret and payload encryption key/IV (consumed by Porta
 echo "JWT_SECRET_KEY=$(openssl rand -base64 48)"
 echo "ENCRYPTION_KEY=$(openssl rand -base64 32)"
 echo "ENCRYPTION_IV=$(openssl rand -base64 16)"
+echo "PAYLOAD_ENCRYPTION_KEY=$(openssl rand -base64 32)"
 ```
 
 Your final .env should look like:
@@ -294,7 +295,10 @@ JWT_ISSUER=https://api.aegisremit.ng
 JWT_AUDIENCE=aegisremit
 ENCRYPTION_KEY=<generated-32-byte-base64>
 ENCRYPTION_IV=<generated-16-byte-base64>
+PAYLOAD_ENCRYPTION_KEY=<generated-32-byte-base64>
 ```
+
+`PAYLOAD_ENCRYPTION_KEY` is required by Portal API login payload decryption and **must match** the frontend build-time value `VITE_PAYLOAD_ENCRYPTION_KEY` used in the admin CI workflow.
 
 Save and exit nano (Ctrl+X → Y → Enter), then lock permissions:
 
@@ -517,11 +521,12 @@ Add these 3 secrets:
 
 Go to https://github.com/Vantroxia-Labs/remit/settings/secrets/actions
 
-Add this 1 secret:
+Add these 2 secrets:
 
 | Secret Name        | Value                        |
 |--------------------|------------------------------|
 | INFRA_DEPLOY_TOKEN | The GitHub PAT from Step 4.3 |
+| PAYLOAD_ENCRYPTION_KEY | Same value as `/opt/aegisremit/.env` `PAYLOAD_ENCRYPTION_KEY` |
 
 ### Step 4.6 — Add secrets to admin repo
 
