@@ -41,6 +41,25 @@ services:
       # Payload encryption
       - Encryption__Key=${ENCRYPTION_KEY}
       - Encryption__Iv=${ENCRYPTION_IV}
+      - PAYLOAD_ENCRYPTION_KEY=${PAYLOAD_ENCRYPTION_KEY}
+      # FIRS / NRS API integration
+      - FIRSHttpClient__BaseUrl=${FIRS_HTTPCLNT_BASEURL}
+      - FIRSApiConfiguration__DefaultConfiguration__BaseUrl=${FIRS_HTTPCLNT_BASEURL}
+      - FIRSApiConfiguration__DefaultConfiguration__ApiKey=${FIRS_API_KEY}
+      - FIRSApiConfiguration__DefaultConfiguration__ApiSecret=${FIRS_API_SECRET}
+      - FIRSApiConfiguration__DefaultConfiguration__Environment=Production
+      # Interswitch access-point
+      - InterswitchHttpClient__BaseUrl=${INTERSWITCH_BASEURL}
+      # SFTPGo internal API
+      - SFTPGoService__Endpoint=http://aegisremit-sftpgo:8080
+      - SFTPGoService__Host=aegisremit-sftpgo
+      - SFTPGoService__Port=2022
+      - SFTPGoService__Username=${SFTPGO_ADMIN_USER}
+      - SFTPGoService__Password=${SFTPGO_ADMIN_PASSWORD}
+      # App URLs
+      - App__BaseUrl=https://api.${DOMAIN}
+      - App__PortalUrl=https://app.${DOMAIN}
+      - ErpApi__BaseUrl=http://aegisremit-erp-api:8080
       # CORS — override first 3 entries of the appsettings.json array with production origins
       - Cors__AllowedOrigins__0=https://${DOMAIN}
       - Cors__AllowedOrigins__1=https://www.${DOMAIN}
@@ -48,6 +67,7 @@ services:
       # Observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://aegisremit-otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-portal-api
+      - SigNoz__Endpoint=http://aegisremit-otel-collector:4317
     networks:
       - web
       - internal
@@ -100,6 +120,18 @@ services:
       # Payload encryption
       - Encryption__Key=${ENCRYPTION_KEY}
       - Encryption__Iv=${ENCRYPTION_IV}
+      - PAYLOAD_ENCRYPTION_KEY=${PAYLOAD_ENCRYPTION_KEY}
+      # FIRS / NRS API integration
+      - FIRSHttpClient__BaseUrl=${FIRS_HTTPCLNT_BASEURL}
+      - FIRSApiConfiguration__DefaultConfiguration__BaseUrl=${FIRS_HTTPCLNT_BASEURL}
+      - FIRSApiConfiguration__DefaultConfiguration__ApiKey=${FIRS_API_KEY}
+      - FIRSApiConfiguration__DefaultConfiguration__ApiSecret=${FIRS_API_SECRET}
+      - FIRSApiConfiguration__DefaultConfiguration__Environment=Production
+      # Interswitch access-point
+      - InterswitchHttpClient__BaseUrl=${INTERSWITCH_BASEURL}
+      # App URLs
+      - App__BaseUrl=https://erp.${DOMAIN}
+      - ErpApi__BaseUrl=http://aegisremit-erp-api:8080
       # CORS
       - Cors__AllowedOrigins__0=https://${DOMAIN}
       - Cors__AllowedOrigins__1=https://www.${DOMAIN}
