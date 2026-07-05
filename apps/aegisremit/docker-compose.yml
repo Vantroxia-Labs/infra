@@ -1,0 +1,110 @@
+# ============================================================
+# Vantroxia Labs — App Stack: AegisRemit
+# Location: /opt/vantroxia/apps/aegisremit
+# Services match your GHCR images:
+#   remit-portal-api | remit-erp-api | remit-sftp-api | remit-admin
+# DB: aegisremit_db | Redis DB: 0 | RabbitMQ vhost: /aegisremit
+# Provision first (from /opt/vantroxia/infra):
+#   ./postgres/create-app-db.sh aegisremit '<pass>'
+#   ./rabbitmq/create-app-vhost.sh aegisremit '<pass>'
+# ============================================================
+name: aegisremit
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-dotnet-common: &dotnet-common
+  restart: unless-stopped
+  networks:
+    - proxy
+    - backend
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+  logging: *default-logging
+
+x-dotnet-env: &dotnet-env
+  ASPNETCORE_ENVIRONMENT: Production
+  ASPNETCORE_URLS: http://+:8080
+  ConnectionStrings__Default: Host=postgres;Port=5432;Database=aegisremit_db;Username=aegisremit;Password=${AEGISREMIT_DB_PASSWORD}
+  Redis__Configuration: redis:6379,password=${REDIS_PASSWORD},defaultDatabase=0
+  RabbitMQ__Host: rabbitmq
+  RabbitMQ__VirtualHost: /aegisremit
+  RabbitMQ__Username: aegisremit
+  RabbitMQ__Password: ${AEGISREMIT_MQ_PASSWORD}
+  Minio__Endpoint: minio:9000
+  Minio__AccessKey: ${AEGISREMIT_MINIO_ACCESS_KEY}
+  Minio__SecretKey: ${AEGISREMIT_MINIO_SECRET_KEY}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production
+  TZ: Africa/Lagos
+
+services:
+  portal-api:
+    <<: *dotnet-common
+    image: ghcr.io/vantroxia-labs/remit-portal-api:${TAG_PORTAL:-latest}
+    container_name: aegisremit-portal-api
+    environment:
+      <<: *dotnet-env
+      OTEL_SERVICE_NAME: remit-portal-api
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.remit-portal.rule=Host(`api.aegisremit.ng`)
+      - traefik.http.routers.remit-portal.entrypoints=websecure
+      - traefik.http.routers.remit-portal.tls.certresolver=le
+      - traefik.http.routers.remit-portal.middlewares=secure-headers@file,api-ratelimit@file
+      - traefik.http.services.remit-portal.loadbalancer.server.port=8080
+
+  erp-api:
+    <<: *dotnet-common
+    image: ghcr.io/vantroxia-labs/remit-erp-api:${TAG_ERP:-latest}
+    container_name: aegisremit-erp-api
+    environment:
+      <<: *dotnet-env
+      OTEL_SERVICE_NAME: remit-erp-api
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.remit-erp.rule=Host(`erp.aegisremit.ng`)
+      - traefik.http.routers.remit-erp.entrypoints=websecure
+      - traefik.http.routers.remit-erp.tls.certresolver=le
+      - traefik.http.routers.remit-erp.middlewares=secure-headers@file,api-ratelimit@file
+      - traefik.http.services.remit-erp.loadbalancer.server.port=8080
+
+  sftp-api:
+    <<: *dotnet-common
+    image: ghcr.io/vantroxia-labs/remit-sftp-api:${TAG_SFTP:-latest}
+    container_name: aegisremit-sftp-api
+    environment:
+      <<: *dotnet-env
+      OTEL_SERVICE_NAME: remit-sftp-api
+    # Internal worker — no Traefik labels. Siblings reach it at
+    # http://aegisremit-sftp-api:8080 on the backend network.
+
+  admin:
+    image: ghcr.io/vantroxia-labs/remit-admin:${TAG_ADMIN:-latest}
+    container_name: aegisremit-admin
+    restart: unless-stopped
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.remit-admin.rule=Host(`admin.aegisremit.ng`)
+      - traefik.http.routers.remit-admin.entrypoints=websecure
+      - traefik.http.routers.remit-admin.tls.certresolver=le
+      - traefik.http.routers.remit-admin.middlewares=secure-headers@file
+      - traefik.http.services.remit-admin.loadbalancer.server.port=80
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *default-logging
+
+networks:
+  proxy:
+    external: true
+  backend:
+    external: true

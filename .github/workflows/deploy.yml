@@ -1,0 +1,185 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Vantroxia-Labs/infra — Deploy Pipeline
+# Triggers:
+#   - repository_dispatch from remit/admin CI pipelines (automatic)
+#   - workflow_dispatch for manual deployments
+# Steps: SSH to VPS → pull latest images → restart services
+# ═══════════════════════════════════════════════════════════════════════════
+name: Deploy
+
+on:
+  # Triggered automatically by remit/admin CI pipelines
+  repository_dispatch:
+    types: [deploy]
+
+  # Manual trigger with optional service selector
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - all-apis
+          - portal-api
+          - erp-api
+          - admin
+          - infra
+          - traefik
+      image_tag:
+        description: 'Image tag (default: latest)'
+        required: false
+        default: 'latest'
+
+env:
+  DEPLOY_DIR: /opt/aegisremit
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine what to deploy
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            SERVICE="${{ github.event.client_payload.service }}"
+            TAG="${{ github.event.client_payload.image_tag }}"
+            TRIGGERED_BY="${{ github.event.client_payload.triggered_by }}"
+            COMMIT="${{ github.event.client_payload.commit_sha }}"
+          else
+            SERVICE="${{ inputs.service }}"
+            TAG="${{ inputs.image_tag }}"
+            TRIGGERED_BY="manual"
+            COMMIT="manual"
+          fi
+          echo "service=$SERVICE" >> $GITHUB_OUTPUT
+          echo "tag=${TAG:-latest}" >> $GITHUB_OUTPUT
+          echo "triggered_by=$TRIGGERED_BY" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "Deploying service=$SERVICE tag=$TAG triggered_by=$TRIGGERED_BY"
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            # Log in to GitHub Container Registry
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            SERVICE="${{ steps.target.outputs.service }}"
+            TAG="${{ steps.target.outputs.tag }}"
+
+            echo "═══════════════════════════════════════════"
+            echo "  Deploying: $SERVICE (tag: $TAG)"
+            echo "  Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "═══════════════════════════════════════════"
+
+            # Helper function for targeted deployments
+            deploy_service() {
+              local svc=$1
+              local dir=$2
+              echo "→ Deploying $svc in $dir..."
+              cd ${{ env.DEPLOY_DIR }}/$dir
+              docker compose --env-file ../.env pull "$svc"
+              docker compose --env-file ../.env up -d --no-deps "$svc"
+              echo "→ Waiting for $svc health..."
+              sleep 5
+              docker compose --env-file ../.env ps "$svc"
+            }
+
+            # Apply EF Core migrations as a one-shot before rolling DB-backed
+            # apps. Production APIs do NOT auto-migrate, so this is required.
+            # Connects to aegisremit-postgres over the internal network; the
+            # infra stack (postgres) must already be running.
+            run_migrations() {
+              echo "→ Applying database migrations (remit-migrator:$TAG)..."
+              local db_conn
+              db_conn=$(grep -E '^DB_CONNECTION_STRING=' ${{ env.DEPLOY_DIR }}/.env | head -1 | cut -d= -f2-)
+              if [ -z "$db_conn" ]; then
+                echo "✗ DB_CONNECTION_STRING not found in ${{ env.DEPLOY_DIR }}/.env"
+                exit 1
+              fi
+              docker pull ghcr.io/vantroxia-labs/remit-migrator:$TAG
+              docker run --rm --network aegisremit-internal \
+                -e "ConnectionStrings__DefaultConnection=$db_conn" \
+                ghcr.io/vantroxia-labs/remit-migrator:$TAG
+              echo "→ Migrations applied successfully."
+            }
+
+            export IMAGE_TAG="$TAG"
+
+            case "$SERVICE" in
+              portal-api|erp-api)
+                run_migrations
+                deploy_service "$SERVICE" "apps"
+                ;;
+              admin)
+                deploy_service "$SERVICE" "apps"
+                ;;
+              all-apis)
+                run_migrations
+                cd ${{ env.DEPLOY_DIR }}/apps
+                docker compose --env-file ../.env pull portal-api erp-api
+                docker compose --env-file ../.env up -d --no-deps portal-api erp-api
+                sleep 5
+                docker compose --env-file ../.env ps
+                ;;
+              all)
+                run_migrations
+                cd ${{ env.DEPLOY_DIR }}/apps
+                docker compose --env-file ../.env pull portal-api erp-api admin
+                docker compose --env-file ../.env up -d --no-deps portal-api erp-api admin
+                sleep 5
+                docker compose --env-file ../.env ps
+                ;;
+              infra)
+                cd ${{ env.DEPLOY_DIR }}/infra
+                docker compose --env-file ../.env pull
+                docker compose --env-file ../.env up -d
+                ;;
+              traefik)
+                cd ${{ env.DEPLOY_DIR }}/traefik
+                docker compose --env-file ../.env pull
+                docker compose --env-file ../.env up -d
+                ;;
+            esac
+
+            # Cleanup old images
+            docker image prune -f
+
+            echo "═══════════════════════════════════════════"
+            echo "  Deploy complete!"
+            echo "═══════════════════════════════════════════"
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "── Health checks ──"
+            curl -sf https://api.aegisremit.ng/health && echo " ✓ Portal API healthy" || echo " ✗ Portal API unhealthy"
+            curl -sf https://erp.aegisremit.ng/health && echo " ✓ ERP API healthy" || echo " ✗ ERP API unhealthy"
+            curl -sf https://app.aegisremit.ng && echo " ✓ Admin healthy" || echo " ✗ Admin unhealthy"
+            echo ""
+            echo "── Running containers ──"
+            echo "--- Traefik ---"
+            cd /opt/aegisremit/traefik && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+            echo "--- Infrastructure ---"
+            cd /opt/aegisremit/infra && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+            echo "--- Applications ---"
+            cd /opt/aegisremit/apps && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+
+      # TODO: Add Slack/Discord notification on success/failure

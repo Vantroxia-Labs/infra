@@ -1,0 +1,22 @@
+# Shared middlewares available to all stacks as <name>@file
+http:
+  middlewares:
+    # Restrict admin surfaces (Traefik dashboard, SFTPGo WebAdmin,
+    # RabbitMQ UI, MinIO console). Replace with your real IP/VPN range.
+    admin-allowlist:
+      ipAllowList:
+        sourceRange:
+          - "203.0.113.10/32"   # <-- your IP here
+
+    secure-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: strict-origin-when-cross-origin
+
+    api-ratelimit:
+      rateLimit:
+        average: 50
+        burst: 100

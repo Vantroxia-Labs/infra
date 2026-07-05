@@ -1,0 +1,59 @@
+# ============================================================
+# TEMPLATE — Spring Boot service (e.g. AegisTrader)
+# Copy to apps/<appname>/docker-compose.yml, rename everything.
+# Provision first:
+#   ./postgres/create-app-db.sh <appname> '<pass>'
+#   ./rabbitmq/create-app-vhost.sh <appname> '<pass>'
+# NOTE the JVM caps — without them Spring Boot will consume
+# 1GB+ on an 8GB box.
+# ============================================================
+name: appname
+
+services:
+  api:
+    image: ghcr.io/vantroxia-labs/appname-api:${TAG:-latest}
+    container_name: appname-api
+    restart: unless-stopped
+    networks:
+      - proxy
+      - backend
+    environment:
+      JAVA_TOOL_OPTIONS: >-
+        -Xms256m -Xmx512m
+        -XX:MaxMetaspaceSize=128m
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/appname_db
+      SPRING_DATASOURCE_USERNAME: appname
+      SPRING_DATASOURCE_PASSWORD: ${APPNAME_DB_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_DATA_REDIS_DATABASE: "2"
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_VIRTUAL_HOST: /appname
+      SPRING_RABBITMQ_USERNAME: appname
+      SPRING_RABBITMQ_PASSWORD: ${APPNAME_MQ_PASSWORD}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: appname-api
+      TZ: Africa/Lagos
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.appname.rule=Host(`api.appname.${BASE_DOMAIN}`)
+      - traefik.http.routers.appname.entrypoints=websecure
+      - traefik.http.routers.appname.tls.certresolver=le
+      - traefik.http.routers.appname.middlewares=secure-headers@file,api-ratelimit@file
+      - traefik.http.services.appname.loadbalancer.server.port=8080
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  proxy:
+    external: true
+  backend:
+    external: true
