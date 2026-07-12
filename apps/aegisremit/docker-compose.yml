@@ -42,6 +42,9 @@ x-dotnet-env: &dotnet-env
   FIRSHttpClient__BaseUrl: ${AEGISREMIT_FIRS_BASE_URL}
   InterswitchHttpClient__BaseUrl: ${AEGISREMIT_INTERSWITCH_BASE_URL}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  # App reads SigNoz:Endpoint for its OTLP exporter; appsettings ships the
+  # literal "${SIGNOZ_ENDPOINT}" placeholder, so override with the collector.
+  SigNoz__Endpoint: http://otel-collector:4317
   OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production
   TZ: Africa/Lagos
 
