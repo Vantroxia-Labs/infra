@@ -53,9 +53,10 @@ services:
       CORS_ALLOWED_ORIGINS: ${GYMMATE_CORS_ALLOWED_ORIGINS:-https://gymmate.vantroxialabs.com}
       CORS_ALLOW_CREDENTIALS: "true"
       FRONTEND_URL: ${GYMMATE_FRONTEND_URL:-https://gymmate.vantroxialabs.com}
-      # ── Bootstrap admin ──
-      APP_ADMIN_EMAIL: ${GYMMATE_ADMIN_EMAIL:-}
-      APP_ADMIN_PASSWORD: ${GYMMATE_ADMIN_PASSWORD:-}
+      # ── Bootstrap admin — REQUIRED: SuperAdminInitializer aborts startup if
+      #    email or password is blank. firstName/lastName default to System/Admin. ──
+      APP_ADMIN_EMAIL: ${GYMMATE_ADMIN_EMAIL:?set GYMMATE_ADMIN_EMAIL in .env}
+      APP_ADMIN_PASSWORD: ${GYMMATE_ADMIN_PASSWORD:?set GYMMATE_ADMIN_PASSWORD in .env}
       # ── Mail (Namecheap/cPanel SMTP) — blank-safe; health check off in prod ──
       MAIL_HOST: ${GYMMATE_MAIL_HOST:-}
       MAIL_PORT: ${GYMMATE_MAIL_PORT:-587}
