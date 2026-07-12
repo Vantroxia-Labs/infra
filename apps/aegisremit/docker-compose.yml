@@ -44,6 +44,10 @@ x-dotnet-env: &dotnet-env
   # Third-party e-invoicing integrations (ERP validates BaseUrl on startup).
   FIRSHttpClient__BaseUrl: ${AEGISREMIT_FIRS_BASE_URL}
   InterswitchHttpClient__BaseUrl: ${AEGISREMIT_INTERSWITCH_BASE_URL}
+  # JWT signing/validation (SecretKey must be non-empty, >= 32 chars for HS256).
+  Jwt__SecretKey: ${AEGISREMIT_JWT_SECRET}
+  Jwt__Issuer: ${AEGISREMIT_JWT_ISSUER:-aegisremit}
+  Jwt__Audience: ${AEGISREMIT_JWT_AUDIENCE:-aegisremit}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   # App reads SigNoz:Endpoint for its OTLP exporter; appsettings ships the
   # literal "${SIGNOZ_ENDPOINT}" placeholder, so override with the collector.
