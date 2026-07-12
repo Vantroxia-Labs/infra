@@ -85,7 +85,6 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
-          script_stop: true
           script: |
             set -euo pipefail
 
