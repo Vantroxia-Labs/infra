@@ -64,6 +64,11 @@ services:
       STRIPE_API_KEY: ${GYMMATE_STRIPE_API_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${GYMMATE_STRIPE_WEBHOOK_SECRET:-}
       STRIPE_CONNECT_WEBHOOK_SECRET: ${GYMMATE_STRIPE_CONNECT_WEBHOOK_SECRET:-}
+      # ── Spring AI (OpenAI) — the OpenAiChatModel bean is eager and refuses to
+      #    start on a blank key, so default to a placeholder to keep the app
+      #    bootable. Set GYMMATE_OPENAI_API_KEY in .env for the AI trainer/plan
+      #    features to actually work (calls 401 until then). ──
+      SPRING_AI_OPENAI_API_KEY: ${GYMMATE_OPENAI_API_KEY:-sk-placeholder-set-a-real-key}
       # ── Telemetry ──
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: gymmate-api
