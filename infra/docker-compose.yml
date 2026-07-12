@@ -54,6 +54,8 @@ services:
       --maxmemory 200mb
       --maxmemory-policy allkeys-lru
       --appendonly yes
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - redis-data:/data
     networks:
