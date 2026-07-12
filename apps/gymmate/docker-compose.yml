@@ -31,7 +31,12 @@ services:
       PG_USER: gymmate
       PG_PASSWORD: ${GYMMATE_DB_PASSWORD}
       DB_DIALECT: org.hibernate.dialect.PostgreSQLDialect
-      JPA_DDL_AUTO: validate
+      # App default is 'update' (application.yml: ${JPA_DDL_AUTO:update}). Flyway
+      # (V1..V12) owns the versioned schema; Hibernate 'update' reconciles entity
+      # drift on top. 'validate' is not viable here — the entity model and the
+      # Flyway migrations have known drift (e.g. api_rate_limits.is_active), so
+      # validate aborts startup. This mirrors how the app ran previously.
+      JPA_DDL_AUTO: update
       SHOW_SQL: "false"
       # ── Flyway (app owns its schema migrations) ──
       FLYWAY_ENABLED: "true"
