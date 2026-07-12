@@ -31,15 +31,10 @@ x-dotnet-common: &dotnet-common
 x-dotnet-env: &dotnet-env
   ASPNETCORE_ENVIRONMENT: Production
   ASPNETCORE_URLS: http://+:8080
-  ConnectionStrings__Default: Host=postgres;Port=5432;Database=aegisremit_db;Username=aegisremit;Password=${AEGISREMIT_DB_PASSWORD}
-  Redis__Configuration: redis:6379,password=${REDIS_PASSWORD},defaultDatabase=0
-  RabbitMQ__Host: rabbitmq
-  RabbitMQ__VirtualHost: /aegisremit
-  RabbitMQ__Username: aegisremit
-  RabbitMQ__Password: ${AEGISREMIT_MQ_PASSWORD}
-  Minio__Endpoint: minio:9000
-  Minio__AccessKey: ${AEGISREMIT_MINIO_ACCESS_KEY}
-  Minio__SecretKey: ${AEGISREMIT_MINIO_SECRET_KEY}
+  # Keys match the app's GetConnectionString(...) calls (env overrides appsettings).
+  ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=aegisremit_db;Username=aegisremit;Password=${AEGISREMIT_DB_PASSWORD}
+  ConnectionStrings__Redis: redis:6379,password=${REDIS_PASSWORD},defaultDatabase=0
+  ConnectionStrings__RabbitMQ: amqp://aegisremit:${AEGISREMIT_MQ_PASSWORD}@rabbitmq:5672/%2Faegisremit
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production
   TZ: Africa/Lagos
