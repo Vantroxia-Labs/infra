@@ -35,6 +35,12 @@ x-dotnet-env: &dotnet-env
   ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=aegisremit_db;Username=aegisremit;Password=${AEGISREMIT_DB_PASSWORD}
   ConnectionStrings__Redis: redis:6379,password=${REDIS_PASSWORD},defaultDatabase=0
   ConnectionStrings__RabbitMQ: amqp://aegisremit:${AEGISREMIT_MQ_PASSWORD}@rabbitmq:5672/%2Faegisremit
+  # AES key/IV for the app's EncryptionService (Key=32 chars, Iv=16 chars).
+  Encryption__Key: ${AEGISREMIT_ENCRYPTION_KEY}
+  Encryption__Iv: ${AEGISREMIT_ENCRYPTION_IV}
+  # Third-party e-invoicing integrations (ERP validates BaseUrl on startup).
+  FIRSHttpClient__BaseUrl: ${AEGISREMIT_FIRS_BASE_URL}
+  InterswitchHttpClient__BaseUrl: ${AEGISREMIT_INTERSWITCH_BASE_URL}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production
   TZ: Africa/Lagos
