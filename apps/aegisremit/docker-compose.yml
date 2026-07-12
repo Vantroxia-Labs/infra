@@ -31,6 +31,9 @@ x-dotnet-common: &dotnet-common
 x-dotnet-env: &dotnet-env
   ASPNETCORE_ENVIRONMENT: Production
   ASPNETCORE_URLS: http://+:8080
+  # TLS is terminated at Traefik (edge redirects HTTP->HTTPS + HSTS);
+  # containers only speak HTTP on the internal network, so don't self-enforce.
+  Security__EnforceHttps: "false"
   # Keys match the app's GetConnectionString(...) calls (env overrides appsettings).
   ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=aegisremit_db;Username=aegisremit;Password=${AEGISREMIT_DB_PASSWORD}
   ConnectionStrings__Redis: redis:6379,password=${REDIS_PASSWORD},defaultDatabase=0
