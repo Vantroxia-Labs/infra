@@ -1,8 +1,9 @@
 # ============================================================
 # Vantroxia Labs — App Stack: AegisRemit
 # Location: /opt/vantroxia/apps/aegisremit
-# Services match your GHCR images:
-#   remit-portal-api | remit-erp-api | remit-sftp-api | remit-admin
+# Services match the GHCR images built by Vantroxia-Labs/remit CI:
+#   remit-portal-api | remit-erp-api
+# (sftp-api and admin are not built/deployed — see remit/ci.yml.)
 # DB: aegisremit_db | Redis DB: 0 | RabbitMQ vhost: /aegisremit
 # Provision first (from /opt/vantroxia/infra):
 #   ./postgres/create-app-db.sh aegisremit '<pass>'
@@ -73,35 +74,6 @@ services:
       - traefik.http.routers.remit-erp.tls.certresolver=le
       - traefik.http.routers.remit-erp.middlewares=secure-headers@file,api-ratelimit@file
       - traefik.http.services.remit-erp.loadbalancer.server.port=8080
-
-  sftp-api:
-    <<: *dotnet-common
-    image: ghcr.io/vantroxia-labs/remit-sftp-api:${TAG_SFTP:-latest}
-    container_name: aegisremit-sftp-api
-    environment:
-      <<: *dotnet-env
-      OTEL_SERVICE_NAME: remit-sftp-api
-    # Internal worker — no Traefik labels. Siblings reach it at
-    # http://aegisremit-sftp-api:8080 on the backend network.
-
-  admin:
-    image: ghcr.io/vantroxia-labs/remit-admin:${TAG_ADMIN:-latest}
-    container_name: aegisremit-admin
-    restart: unless-stopped
-    networks:
-      - proxy
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.remit-admin.rule=Host(`app.aegisremit.ng`)
-      - traefik.http.routers.remit-admin.entrypoints=websecure
-      - traefik.http.routers.remit-admin.tls.certresolver=le
-      - traefik.http.routers.remit-admin.middlewares=secure-headers@file
-      - traefik.http.services.remit-admin.loadbalancer.server.port=80
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-    logging: *default-logging
 
 networks:
   proxy:

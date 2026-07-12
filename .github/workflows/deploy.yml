@@ -24,7 +24,6 @@ on:
           - all-apis       # AegisRemit APIs only
           - portal-api
           - erp-api
-          - sftp-api
           - admin
           - gymmate        # whole GymMate stack
           - aegistrader    # whole AegisTrader (Spring Boot) stack
@@ -149,18 +148,15 @@ jobs:
             export IMAGE_TAG="$TAG"
 
             case "$SERVICE" in
-              portal-api|erp-api|sftp-api)
+              portal-api|erp-api)
                 run_migrations
                 deploy_service "$SERVICE" "apps/aegisremit"
-                ;;
-              admin)
-                deploy_service "admin" "apps/aegisremit"
                 ;;
               all-apis)
                 run_migrations
                 cd ${{ env.DEPLOY_DIR }}/apps/aegisremit
-                docker compose pull portal-api erp-api sftp-api
-                docker compose up -d --no-deps portal-api erp-api sftp-api
+                docker compose pull portal-api erp-api
+                docker compose up -d --no-deps portal-api erp-api
                 sleep 5
                 docker compose ps
                 ;;
@@ -202,7 +198,7 @@ jobs:
             echo "── Health checks ──"
             curl -sf https://api.aegisremit.ng/health > /dev/null && echo " ✓ Portal API healthy" || echo " ✗ Portal API unhealthy"
             curl -sf https://erp.aegisremit.ng/health > /dev/null && echo " ✓ ERP API healthy"    || echo " ✗ ERP API unhealthy"
-            curl -sf https://app.aegisremit.ng > /dev/null        && echo " ✓ Admin healthy"      || echo " ✗ Admin unhealthy"
+            curl -sf https://api.gymmate.vantroxialabs.com/actuator/health > /dev/null && echo " ✓ GymMate API healthy" || echo " ✗ GymMate API unhealthy"
             echo ""
             echo "── Running containers ──"
             for stack in traefik infra apps/aegisremit apps/gymmate apps/aegistrader; do
