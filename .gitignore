@@ -33,4 +33,4 @@ build/
 out/
 *.tmp
 tmp/
-/traefik/Contabo_deploy.md
+/Contabo_deploy.md

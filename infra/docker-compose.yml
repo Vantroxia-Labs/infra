@@ -147,64 +147,57 @@ services:
           memory: 512M
     logging: *default-logging
 
-  # ----------------------------------------------------------
-  # SFTPGo — SFTP ingestion, PostgreSQL data provider
-  # Host port 2222 kept (matches your current firewall/docs)
-  # ----------------------------------------------------------
-  sftpgo:
-    image: drakkan/sftpgo:v2-alpine
-    container_name: sftpgo
+  # ---------------------------------------------------------
+  # OpenObserve — self-hosted, open-source alternative to
+  # SigNoz Cloud. Ingests logs, metrics AND traces over OTLP.
+  # UI at logs.${BASE_DOMAIN} (IP-restricted).
+  # ---------------------------------------------------------
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    container_name: openobserve
     restart: unless-stopped
     environment:
-      SFTPGO_DATA_PROVIDER__DRIVER: postgresql
-      SFTPGO_DATA_PROVIDER__HOST: postgres
-      SFTPGO_DATA_PROVIDER__PORT: "5432"
-      SFTPGO_DATA_PROVIDER__NAME: sftpgo_db
-      SFTPGO_DATA_PROVIDER__USERNAME: sftpgo
-      SFTPGO_DATA_PROVIDER__PASSWORD: ${SFTPGO_DB_PASSWORD}
-      SFTPGO_SFTPD__BINDINGS__0__PORT: "2022"
-      SFTPGO_HTTPD__BINDINGS__0__PORT: "8080"
-      TZ: Africa/Lagos
-    ports:
-      - "2222:2022"
+      ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_EMAIL}
+      ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_PASSWORD}
+      ZO_DATA_DIR: /data
+      ZO_TELEMETRY: "false"
+      # Cap on-disk telemetry so a 75GB NVMe shared with Postgres
+      # and images never fills from unbounded retention.
+      ZO_COMPACT_DATA_RETENTION_DAYS: "15"
     volumes:
-      - sftpgo-data:/srv/sftpgo
-      - sftpgo-home:/var/lib/sftpgo
-    networks:
-      - backend
-      - proxy
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - openobserve-data:/data
+    networks: [ backend, proxy ]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.sftpgo.rule=Host(`sftp.${BASE_DOMAIN}`)
-      - traefik.http.routers.sftpgo.entrypoints=websecure
-      - traefik.http.routers.sftpgo.tls.certresolver=le
-      - traefik.http.routers.sftpgo.middlewares=admin-allowlist@file
-      - traefik.http.services.sftpgo.loadbalancer.server.port=8080
+      - traefik.http.routers.o2.rule=Host(`logs.${BASE_DOMAIN}`)
+      - traefik.http.routers.o2.entrypoints=websecure
+      - traefik.http.routers.o2.tls.certresolver=le
+      - traefik.http.routers.o2.middlewares=admin-allowlist@file
+      - traefik.http.services.o2.loadbalancer.server.port=5080
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 768M
     logging: *default-logging
 
   # ----------------------------------------------------------
-  # SigNoz OTEL Collector → SigNoz Cloud
-  # Apps send OTLP to otel-collector:4317 (gRPC) / 4318 (HTTP)
+  # OTEL Collector → OpenObserve
+  # Apps send OTLP to otel-collector:4317 (gRPC) / 4318 (HTTP).
+  # Uses the contrib distro; exporter config in ./otel/config.yaml.
   # ----------------------------------------------------------
   otel-collector:
-    image: signoz/signoz-otel-collector:0.102.12
+    image: otel/opentelemetry-collector-contrib:0.111.0
     container_name: otel-collector
     restart: unless-stopped
     command: ["--config=/etc/otel/config.yaml"]
     environment:
-      SIGNOZ_INGESTION_KEY: ${SIGNOZ_INGESTION_KEY}
-      SIGNOZ_ENDPOINT: ${SIGNOZ_ENDPOINT}
+      OPENOBSERVE_OTLP_AUTH: ${OPENOBSERVE_OTLP_AUTH}
     volumes:
       - ./otel/config.yaml:/etc/otel/config.yaml:ro
     networks:
       - backend
+    depends_on:
+      - openobserve
     deploy:
       resources:
         limits:
@@ -216,8 +209,7 @@ volumes:
   redis-data:
   rabbitmq-data:
   minio-data:
-  sftpgo-data:
-  sftpgo-home:
+  openobserve-data:
 
 networks:
   proxy:

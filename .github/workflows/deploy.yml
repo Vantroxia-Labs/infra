@@ -1,18 +1,17 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# Vantroxia-Labs/infra — Deploy Pipeline
+# Vantroxia-Labs/vantroxia-infra — Deploy Pipeline
 # Triggers:
-#   - repository_dispatch from remit/admin CI pipelines (automatic)
+#   - repository_dispatch from app CI pipelines (automatic)
 #   - workflow_dispatch for manual deployments
-# Steps: SSH to VPS → pull latest images → restart services
+# Steps: SSH to VPS → sync infra repo → pull images → restart services
+# Layout: /opt/vantroxia/{traefik,infra,apps/<app>} — per-stack .env files
 # ═══════════════════════════════════════════════════════════════════════════
 name: Deploy
 
 on:
-  # Triggered automatically by remit/admin CI pipelines
   repository_dispatch:
     types: [deploy]
 
-  # Manual trigger with optional service selector
   workflow_dispatch:
     inputs:
       service:
@@ -21,11 +20,14 @@ on:
         default: 'all'
         type: choice
         options:
-          - all
-          - all-apis
+          - all            # all AegisRemit services
+          - all-apis       # AegisRemit APIs only
           - portal-api
           - erp-api
+          - sftp-api
           - admin
+          - gymmate        # whole GymMate stack
+          - aegistrader    # whole AegisTrader (Spring Boot) stack
           - infra
           - traefik
       image_tag:
@@ -34,7 +36,7 @@ on:
         default: 'latest'
 
 env:
-  DEPLOY_DIR: /opt/aegisremit
+  DEPLOY_DIR: /opt/vantroxia
 
 jobs:
   deploy:
@@ -43,6 +45,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # Push compose files/configs from this repo to the VPS.
+      # The VPS needs NO GitHub credentials — the runner is the courier.
+      # .env files live only on the VPS and are never touched by this sync.
+      - name: Sync infra files to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "traefik,infra,apps,scripts"
+          target: /opt/vantroxia
+          overwrite: true
 
       - name: Determine what to deploy
         id: target
@@ -74,7 +89,6 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Log in to GitHub Container Registry
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             SERVICE="${{ steps.target.outputs.service }}"
@@ -85,33 +99,49 @@ jobs:
             echo "  Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "═══════════════════════════════════════════"
 
-            # Helper function for targeted deployments
+            # Ensure provisioning scripts stay executable after sync
+            chmod +x ${{ env.DEPLOY_DIR }}/scripts/*.sh \
+                     ${{ env.DEPLOY_DIR }}/infra/postgres/*.sh \
+                     ${{ env.DEPLOY_DIR }}/infra/rabbitmq/*.sh 2>/dev/null || true
+
+            # ── Helpers ─────────────────────────────────────────────
+            # Each stack dir has its own .env; compose auto-loads it.
             deploy_service() {
               local svc=$1
               local dir=$2
               echo "→ Deploying $svc in $dir..."
               cd ${{ env.DEPLOY_DIR }}/$dir
-              docker compose --env-file ../.env pull "$svc"
-              docker compose --env-file ../.env up -d --no-deps "$svc"
+              docker compose pull "$svc"
+              docker compose up -d --no-deps "$svc"
               echo "→ Waiting for $svc health..."
               sleep 5
-              docker compose --env-file ../.env ps "$svc"
+              docker compose ps "$svc"
             }
 
-            # Apply EF Core migrations as a one-shot before rolling DB-backed
-            # apps. Production APIs do NOT auto-migrate, so this is required.
-            # Connects to aegisremit-postgres over the internal network; the
-            # infra stack (postgres) must already be running.
+            deploy_stack() {
+              local dir=$1
+              echo "→ Deploying full stack in $dir..."
+              cd ${{ env.DEPLOY_DIR }}/$dir
+              docker compose pull
+              docker compose up -d --remove-orphans
+              sleep 5
+              docker compose ps
+            }
+
+            # EF Core migrations as a one-shot before rolling DB-backed apps.
+            # Runs on the shared `backend` network against `postgres`.
+            # Requires DB_CONNECTION_STRING in apps/aegisremit/.env, e.g.:
+            #   DB_CONNECTION_STRING=Host=postgres;Port=5432;Database=aegisremit_db;Username=aegisremit;Password=...
             run_migrations() {
               echo "→ Applying database migrations (remit-migrator:$TAG)..."
               local db_conn
-              db_conn=$(grep -E '^DB_CONNECTION_STRING=' ${{ env.DEPLOY_DIR }}/.env | head -1 | cut -d= -f2-)
+              db_conn=$(grep -E '^DB_CONNECTION_STRING=' ${{ env.DEPLOY_DIR }}/apps/aegisremit/.env | head -1 | cut -d= -f2-)
               if [ -z "$db_conn" ]; then
-                echo "✗ DB_CONNECTION_STRING not found in ${{ env.DEPLOY_DIR }}/.env"
+                echo "✗ DB_CONNECTION_STRING not found in apps/aegisremit/.env"
                 exit 1
               fi
               docker pull ghcr.io/vantroxia-labs/remit-migrator:$TAG
-              docker run --rm --network aegisremit-internal \
+              docker run --rm --network backend \
                 -e "ConnectionStrings__DefaultConnection=$db_conn" \
                 ghcr.io/vantroxia-labs/remit-migrator:$TAG
               echo "→ Migrations applied successfully."
@@ -120,42 +150,43 @@ jobs:
             export IMAGE_TAG="$TAG"
 
             case "$SERVICE" in
-              portal-api|erp-api)
+              portal-api|erp-api|sftp-api)
                 run_migrations
-                deploy_service "$SERVICE" "apps"
+                deploy_service "$SERVICE" "apps/aegisremit"
                 ;;
               admin)
-                deploy_service "$SERVICE" "apps"
+                deploy_service "admin" "apps/aegisremit"
                 ;;
               all-apis)
                 run_migrations
-                cd ${{ env.DEPLOY_DIR }}/apps
-                docker compose --env-file ../.env pull portal-api erp-api
-                docker compose --env-file ../.env up -d --no-deps portal-api erp-api
+                cd ${{ env.DEPLOY_DIR }}/apps/aegisremit
+                docker compose pull portal-api erp-api sftp-api
+                docker compose up -d --no-deps portal-api erp-api sftp-api
                 sleep 5
-                docker compose --env-file ../.env ps
+                docker compose ps
                 ;;
               all)
                 run_migrations
-                cd ${{ env.DEPLOY_DIR }}/apps
-                docker compose --env-file ../.env pull portal-api erp-api admin
-                docker compose --env-file ../.env up -d --no-deps portal-api erp-api admin
-                sleep 5
-                docker compose --env-file ../.env ps
+                deploy_stack "apps/aegisremit"
+                ;;
+              gymmate)
+                deploy_stack "apps/gymmate"
+                ;;
+              aegistrader)
+                deploy_stack "apps/aegistrader"
                 ;;
               infra)
-                cd ${{ env.DEPLOY_DIR }}/infra
-                docker compose --env-file ../.env pull
-                docker compose --env-file ../.env up -d
+                deploy_stack "infra"
                 ;;
               traefik)
-                cd ${{ env.DEPLOY_DIR }}/traefik
-                docker compose --env-file ../.env pull
-                docker compose --env-file ../.env up -d
+                deploy_stack "traefik"
+                ;;
+              *)
+                echo "✗ Unknown service: $SERVICE"
+                exit 1
                 ;;
             esac
 
-            # Cleanup old images
             docker image prune -f
 
             echo "═══════════════════════════════════════════"
@@ -170,16 +201,19 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             echo "── Health checks ──"
-            curl -sf https://api.aegisremit.ng/health && echo " ✓ Portal API healthy" || echo " ✗ Portal API unhealthy"
-            curl -sf https://erp.aegisremit.ng/health && echo " ✓ ERP API healthy" || echo " ✗ ERP API unhealthy"
-            curl -sf https://app.aegisremit.ng && echo " ✓ Admin healthy" || echo " ✗ Admin unhealthy"
+            curl -sf https://api.aegisremit.ng/health > /dev/null && echo " ✓ Portal API healthy" || echo " ✗ Portal API unhealthy"
+            curl -sf https://erp.aegisremit.ng/health > /dev/null && echo " ✓ ERP API healthy"    || echo " ✗ ERP API unhealthy"
+            curl -sf https://app.aegisremit.ng > /dev/null        && echo " ✓ Admin healthy"      || echo " ✗ Admin unhealthy"
             echo ""
             echo "── Running containers ──"
-            echo "--- Traefik ---"
-            cd /opt/aegisremit/traefik && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
-            echo "--- Infrastructure ---"
-            cd /opt/aegisremit/infra && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
-            echo "--- Applications ---"
-            cd /opt/aegisremit/apps && docker compose --env-file ../.env ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+            for stack in traefik infra apps/aegisremit apps/gymmate apps/aegistrader; do
+              dir=/opt/vantroxia/$stack
+              [ -f "$dir/docker-compose.yml" ] || continue
+              echo "--- $stack ---"
+              cd "$dir" && docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" || true
+            done
+            echo ""
+            echo "── Memory ──"
+            docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | head -20
 
       # TODO: Add Slack/Discord notification on success/failure

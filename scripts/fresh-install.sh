@@ -24,7 +24,8 @@ docker ps -aq --filter "name=traefik" | xargs -r docker rm -f
 echo "=== 2/6 Removing old volumes (FRESH START — data is destroyed) ==="
 docker volume rm -f \
   aegisremit-postgres-data aegisremit-sftp-data \
-  infra_minio-data infra_rabbitmq-data infra_redis-data infra_sftpgo-backups \
+  infra_minio-data infra_rabbitmq-data infra_redis-data \
+  infra_sftpgo-data infra_sftpgo-home infra_sftpgo-backups \
   traefik_traefik-certs traefik_traefik-logs 2>/dev/null || true
 
 echo "=== 3/6 Removing old networks, creating shared ones ==="
@@ -43,18 +44,13 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' postgres)" = "healthy" ]
 echo "Waiting for RabbitMQ to be healthy..."
 until [ "$(docker inspect -f '{{.State.Health.Status}}' rabbitmq)" = "healthy" ]; do sleep 3; done
 
-echo "=== 6/6 Provisioning AegisRemit + SFTPGo resources ==="
+echo "=== 6/6 Provisioning AegisRemit resources ==="
 # Read passwords from the app .env so they stay in one place
 AEGISREMIT_DB_PASSWORD=$(grep '^AEGISREMIT_DB_PASSWORD=' apps/aegisremit/.env | cut -d= -f2-)
 AEGISREMIT_MQ_PASSWORD=$(grep '^AEGISREMIT_MQ_PASSWORD=' apps/aegisremit/.env | cut -d= -f2-)
-SFTPGO_DB_PASSWORD=$(grep '^SFTPGO_DB_PASSWORD=' infra/.env | cut -d= -f2-)
 
 ./infra/postgres/create-app-db.sh aegisremit "$AEGISREMIT_DB_PASSWORD"
-./infra/postgres/create-app-db.sh sftpgo "$SFTPGO_DB_PASSWORD"
 ./infra/rabbitmq/create-app-vhost.sh aegisremit "$AEGISREMIT_MQ_PASSWORD"
-
-# Restart SFTPGo now that its database exists
-(cd infra && docker compose restart sftpgo)
 
 echo "=== Starting AegisRemit ==="
 (cd apps/aegisremit && docker compose up -d)

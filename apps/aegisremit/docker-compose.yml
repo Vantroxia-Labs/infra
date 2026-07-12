@@ -92,7 +92,7 @@ services:
       - proxy
     labels:
       - traefik.enable=true
-      - traefik.http.routers.remit-admin.rule=Host(`admin.aegisremit.ng`)
+      - traefik.http.routers.remit-admin.rule=Host(`app.aegisremit.ng`)
       - traefik.http.routers.remit-admin.entrypoints=websecure
       - traefik.http.routers.remit-admin.tls.certresolver=le
       - traefik.http.routers.remit-admin.middlewares=secure-headers@file

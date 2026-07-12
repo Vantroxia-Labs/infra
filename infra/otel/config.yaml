@@ -1,4 +1,4 @@
-# SigNoz OTEL Collector → SigNoz Cloud
+# OTEL Collector → OpenObserve (self-hosted)
 # Apps on the `backend` network send to:
 #   gRPC: http://otel-collector:4317
 #   HTTP: http://otel-collector:4318
@@ -30,24 +30,22 @@ processors:
     timeout: 10s
 
 exporters:
-  otlp:
-    endpoint: ${env:SIGNOZ_ENDPOINT}   # e.g. ingest.eu.signoz.cloud:443
-    tls:
-      insecure: false
+  otlphttp/openobserve:
+    endpoint: http://openobserve:5080/api/default
     headers:
-      signoz-ingestion-key: ${env:SIGNOZ_INGESTION_KEY}
+      Authorization: Basic ${env:OPENOBSERVE_OTLP_AUTH}   # base64 of email:password
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp]
+      exporters: [otlphttp/openobserve]
     metrics:
       receivers: [otlp, hostmetrics]
       processors: [memory_limiter, resourcedetection, batch]
-      exporters: [otlp]
+      exporters: [otlphttp/openobserve]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp]
+      exporters: [otlphttp/openobserve]
