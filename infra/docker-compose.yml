@@ -17,7 +17,7 @@ services:
   # PostgreSQL — single instance, one database + role per app
   # ----------------------------------------------------------
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     container_name: postgres
     restart: unless-stopped
     environment:
@@ -26,7 +26,9 @@ services:
       POSTGRES_DB: postgres
       TZ: Africa/Lagos
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # PG18 moved PGDATA to /var/lib/postgresql/18/docker and the image
+      # VOLUME to /var/lib/postgresql — mount the parent so data persists.
+      - postgres-data:/var/lib/postgresql
       - ./postgres:/scripts:ro
     networks:
       - backend
