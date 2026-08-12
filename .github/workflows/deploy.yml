@@ -20,11 +20,11 @@ on:
         default: 'all'
         type: choice
         options:
-          - all            # all AegisRemit services
-          - all-apis       # AegisRemit APIs only
+          - all            # every app stack (AegisRemit + GymMate + AegisTrader)
+          - all-aegisremit # all AegisRemit services only
+          - all-apis       # AegisRemit APIs only (portal + erp)
           - portal-api
           - erp-api
-          - admin
           - gymmate        # whole GymMate stack
           - aegistrader    # whole AegisTrader (Spring Boot) stack
           - infra
@@ -161,6 +161,12 @@ jobs:
                 docker compose ps
                 ;;
               all)
+                run_migrations
+                deploy_stack "apps/aegisremit"
+                deploy_stack "apps/gymmate"
+                deploy_stack "apps/aegistrader"
+                ;;
+              all-aegisremit)
                 run_migrations
                 deploy_stack "apps/aegisremit"
                 ;;
