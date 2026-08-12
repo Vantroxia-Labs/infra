@@ -54,7 +54,12 @@ x-dotnet-env: &dotnet-env
   SigNoz__Endpoint: http://otel-collector:4317
   OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production
   TZ: Africa/Lagos
-
+  # AWS SNS
+  AWS_REGION: ${AWS_REGION:-us-east-2}
+  AWS_ACCESS_KEY_ID: ${AEGISREMIT_AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AEGISREMIT_AWS_SECRET_ACCESS_KEY}
+  AWS_SNS_TOPIC_ARN: ${AEGISREMIT_SNS_TOPIC_ARN}
+  
 services:
   portal-api:
     <<: *dotnet-common

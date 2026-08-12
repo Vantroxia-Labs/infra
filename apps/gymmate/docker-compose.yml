@@ -70,6 +70,11 @@ services:
       #    bootable. Set GYMMATE_OPENAI_API_KEY in .env for the AI trainer/plan
       #    features to actually work (calls 401 until then). ──
       SPRING_AI_OPENAI_API_KEY: ${GYMMATE_OPENAI_API_KEY:-sk-placeholder-set-a-real-key}
+      # ── AWS SNS ──
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      AWS_ACCESS_KEY_ID: ${GYMMATE_AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${GYMMATE_AWS_SECRET_ACCESS_KEY}
+      SNS_TOPIC_ARN: ${GYMMATE_SNS_TOPIC_ARN}
       # ── Telemetry ──
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: gymmate-api
