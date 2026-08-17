@@ -20,13 +20,14 @@ on:
         default: 'all'
         type: choice
         options:
-          - all            # every app stack (AegisRemit + GymMate + AegisTrader)
-          - all-aegisremit # all AegisRemit services only
+          - all            # every app stack (AegisRemit + GymMate + Vantroxia)
+          - all-aegisremit # all AegisRemit services only (APIs + admin portal)
           - all-apis       # AegisRemit APIs only (portal + erp)
           - portal-api
           - erp-api
-          - gymmate        # whole GymMate stack
-          - aegistrader    # whole AegisTrader (Spring Boot) stack
+          - admin          # AegisRemit admin portal (frontend)
+          - gymmate        # whole GymMate stack (API + frontend)
+          - vantroxialabs  # vantroxialabs.com marketing/coming-soon
           - infra
           - traefik
       image_tag:
@@ -152,6 +153,9 @@ jobs:
                 run_migrations
                 deploy_service "$SERVICE" "apps/aegisremit"
                 ;;
+              admin)
+                deploy_service "admin" "apps/aegisremit"
+                ;;
               all-apis)
                 run_migrations
                 cd ${{ env.DEPLOY_DIR }}/apps/aegisremit
@@ -164,7 +168,7 @@ jobs:
                 run_migrations
                 deploy_stack "apps/aegisremit"
                 deploy_stack "apps/gymmate"
-                deploy_stack "apps/aegistrader"
+                deploy_stack "apps/vantroxialabs"
                 ;;
               all-aegisremit)
                 run_migrations
@@ -173,8 +177,8 @@ jobs:
               gymmate)
                 deploy_stack "apps/gymmate"
                 ;;
-              aegistrader)
-                deploy_stack "apps/aegistrader"
+              vantroxialabs)
+                deploy_stack "apps/vantroxialabs"
                 ;;
               infra)
                 deploy_stack "infra"
@@ -204,10 +208,13 @@ jobs:
             echo "── Health checks ──"
             curl -sf https://api.aegisremit.ng/health > /dev/null && echo " ✓ Portal API healthy" || echo " ✗ Portal API unhealthy"
             curl -sf https://erp.aegisremit.ng/health > /dev/null && echo " ✓ ERP API healthy"    || echo " ✗ ERP API unhealthy"
-            curl -sf https://api.gymmate.vantroxialabs.com/actuator/health > /dev/null && echo " ✓ GymMate API healthy" || echo " ✗ GymMate API unhealthy"
+            curl -sf https://aegisremit.ng > /dev/null && echo " ✓ AegisRemit Admin healthy" || echo " ✗ AegisRemit Admin unhealthy"
+            curl -sf https://api.gymmatehub.com/actuator/health > /dev/null && echo " ✓ GymMate API healthy" || echo " ✗ GymMate API unhealthy"
+            curl -sf https://gymmatehub.com > /dev/null && echo " ✓ GymMate Web healthy" || echo " ✗ GymMate Web unhealthy"
+            curl -sf https://vantroxialabs.com > /dev/null && echo " ✓ Vantroxia Labs healthy" || echo " ✗ Vantroxia Labs unhealthy"
             echo ""
             echo "── Running containers ──"
-            for stack in traefik infra apps/aegisremit apps/gymmate apps/aegistrader; do
+            for stack in traefik infra apps/aegisremit apps/gymmate apps/vantroxialabs; do
               dir=/opt/vantroxia/$stack
               [ -f "$dir/docker-compose.yml" ] || continue
               echo "--- $stack ---"

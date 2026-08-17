@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vantroxia Labs — Coming Soon</title>
+  <meta name="description" content="Vantroxia Labs builds modern software solutions. Our website is coming soon.">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{
+      min-height:100vh;display:flex;align-items:center;justify-content:center;
+      font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+      background:#0a0a12;color:#e0e0ee;overflow:hidden;
+    }
+    /* animated gradient orbs */
+    .bg{position:fixed;inset:0;z-index:0;pointer-events:none}
+    .orb{position:absolute;border-radius:50%;filter:blur(120px);opacity:.35;animation:drift 12s ease-in-out infinite alternate}
+    .orb-1{width:420px;height:420px;background:#6c47ff;top:-10%;left:-5%}
+    .orb-2{width:350px;height:350px;background:#00c6ff;bottom:-8%;right:-6%;animation-delay:4s}
+    .orb-3{width:280px;height:280px;background:#ff6ec7;top:50%;left:55%;animation-delay:8s}
+    @keyframes drift{
+      0%{transform:translate(0,0) scale(1)}
+      100%{transform:translate(40px,30px) scale(1.15)}
+    }
+    .card{
+      position:relative;z-index:1;text-align:center;padding:3rem 2.5rem;
+      max-width:520px;width:90%;
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:24px;
+      backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+    }
+    .logo{font-size:1.6rem;font-weight:700;letter-spacing:-.02em;margin-bottom:.25rem}
+    .logo span{
+      background:linear-gradient(135deg,#6c47ff,#00c6ff);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    }
+    .tagline{font-size:.95rem;color:#888;margin-bottom:2rem}
+    h1{font-size:2.4rem;font-weight:800;line-height:1.15;margin-bottom:1rem;
+      background:linear-gradient(135deg,#fff 30%,#6c47ff 70%,#00c6ff);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    }
+    p{font-size:1.05rem;color:#aaa;line-height:1.6;margin-bottom:2rem}
+    .links{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+    .links a{
+      display:inline-flex;align-items:center;gap:.4rem;
+      padding:.65rem 1.4rem;border-radius:12px;font-size:.9rem;font-weight:500;
+      text-decoration:none;transition:all .2s ease;
+    }
+    .links a.primary{
+      background:linear-gradient(135deg,#6c47ff,#4530b8);color:#fff;
+      border:1px solid rgba(108,71,255,.4);
+    }
+    .links a.primary:hover{box-shadow:0 0 20px rgba(108,71,255,.5);transform:translateY(-1px)}
+    .links a.secondary{
+      background:rgba(255,255,255,.06);color:#ccc;
+      border:1px solid rgba(255,255,255,.1);
+    }
+    .links a.secondary:hover{background:rgba(255,255,255,.1);color:#fff}
+    .footer{margin-top:2.5rem;font-size:.8rem;color:#555}
+  </style>
+</head>
+<body>
+  <div class="bg">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+  <div class="card">
+    <div class="logo"><span>Vantroxia Labs</span></div>
+    <div class="tagline">Modern software, built to scale.</div>
+    <h1>Coming Soon</h1>
+    <p>We're building something great. Our website is under construction — check back soon.</p>
+    <div class="links">
+      <a href="https://gymmatehub.com" class="primary">GymMateHub</a>
+      <a href="https://aegisremit.ng" class="secondary">AegisRemit</a>
+    </div>
+    <div class="footer">&copy; 2026 Vantroxia Labs. All rights reserved.</div>
+  </div>
+</body>
+</html>

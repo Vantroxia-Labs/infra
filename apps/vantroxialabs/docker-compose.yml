@@ -1,0 +1,40 @@
+# ============================================================
+# Vantroxia Labs — App Stack: Marketing Site (Coming Soon)
+# Location: /opt/vantroxia/apps/vantroxialabs
+# Static nginx container built from local Dockerfile.
+# ============================================================
+name: vantroxialabs
+
+services:
+  web:
+    build: .
+    container_name: vantroxialabs-web
+    restart: unless-stopped
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.vantroxialabs.rule=Host(`vantroxialabs.com`) || Host(`www.vantroxialabs.com`)
+      - traefik.http.routers.vantroxialabs.entrypoints=websecure
+      - traefik.http.routers.vantroxialabs.tls.certresolver=le
+      - traefik.http.routers.vantroxialabs.middlewares=secure-headers@file
+      - traefik.http.services.vantroxialabs.loadbalancer.server.port=80
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  proxy:
+    external: true

@@ -81,7 +81,7 @@ services:
       TZ: Africa/Lagos
     labels:
       - traefik.enable=true
-      - traefik.http.routers.gymmate-api.rule=Host(`api.gymmate.${BASE_DOMAIN}`)
+      - traefik.http.routers.gymmate-api.rule=Host(`api.gymmatehub.com`)
       - traefik.http.routers.gymmate-api.entrypoints=websecure
       - traefik.http.routers.gymmate-api.tls.certresolver=le
       - traefik.http.routers.gymmate-api.middlewares=secure-headers@file,api-ratelimit@file
@@ -96,6 +96,40 @@ services:
       resources:
         limits:
           memory: 1024M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------
+  # GymMateHub Frontend (React/Vite → nginx)
+  # Source: github.com/GymmateHub/frontend
+  # Image built by GymmateHub/frontend CI → ghcr.io
+  # ----------------------------------------------------------
+  web:
+    image: ghcr.io/gymmatehub/gymmate-frontend:${TAG:-latest}
+    container_name: gymmate-web
+    restart: unless-stopped
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.gymmate-web.rule=Host(`gymmatehub.com`) || Host(`www.gymmatehub.com`)
+      - traefik.http.routers.gymmate-web.entrypoints=websecure
+      - traefik.http.routers.gymmate-web.tls.certresolver=le
+      - traefik.http.routers.gymmate-web.middlewares=secure-headers@file
+      - traefik.http.services.gymmate-web.loadbalancer.server.port=80
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     logging:
       driver: json-file
       options:

@@ -16,9 +16,10 @@ Home on the VPS: **/opt/vantroxia** (git repo `vantroxia-vps`).
 │   ├── rabbitmq/create-app-vhost.sh
 │   └── otel/config.yaml          # OTLP receiver → OpenObserve exporter
 ├── apps/
-│   ├── aegisremit/               # portal-api + erp-api (.NET)
-│   ├── gymmate/                  # api (Spring Boot / Java 21)
-│   └── templates/springboot.docker-compose.yml   # copy-me template (e.g. AegisTrader)
+│   ├── aegisremit/               # portal-api + erp-api (.NET) + admin (React/nginx)
+│   ├── gymmate/                  # api (Spring Boot) + web (React/nginx)
+│   ├── vantroxialabs/            # marketing site (coming-soon, nginx)
+│   └── templates/springboot.docker-compose.yml   # copy-me template
 └── scripts/fresh-install.sh      # destructive clean rebuild (provisions AegisRemit)
 ```
 
@@ -54,7 +55,7 @@ Telemetry is fully self-hosted — there is **no SigNoz Cloud dependency**.
 |--------------|------------------|----------|----------------|------------------|---------------------|
 | aegisremit   | `aegisremit_db`  | 0        | `/aegisremit`  | `aegisremit-`    | deployed            |
 | gymmate      | `gymmate_db`     | 1        | *(not used)*   | `gymmate-`       | deployed            |
-| aegistrader  | `aegistrader_db` | 2        | `/aegistrader` | `aegistrader-`   | template only       |
+| vantroxialabs| *(none)*         | —        | —              | `vantroxialabs-` | deployed (static)   |
 
 Shared services: postgres / redis / rabbitmq / minio / openobserve / otel-collector / traefik,
 plus the external `proxy` and `backend` Docker networks.
@@ -67,12 +68,18 @@ Vantroxia, not to any single product.
 
 ## Deployed app services
 
-- **AegisRemit** (`apps/aegisremit`): `portal-api` → `api.aegisremit.ng`, `erp-api` → `erp.aegisremit.ng`.
-  Both are .NET (512M each), TLS terminated at Traefik. Images from
-  `ghcr.io/vantroxia-labs/remit-portal-api` and `…/remit-erp-api`.
-  (No `sftp-api` or `admin` service is built or deployed.)
-- **GymMate** (`apps/gymmate`): `api` → `api.gymmate.${BASE_DOMAIN}` (1G). Spring Boot / Java 21,
-  frontend expected at `gymmate.${BASE_DOMAIN}`.
+- **AegisRemit** (`apps/aegisremit`):
+  - `portal-api` → `api.aegisremit.ng` (.NET, 512M)
+  - `erp-api` → `erp.aegisremit.ng` (.NET, 512M)
+  - `admin` → `aegisremit.ng` / `www.aegisremit.ng` (React/nginx, 128M).
+    Image: `ghcr.io/vantroxia-labs/remit-admin`. Source: `Vantroxia-Labs/admin`.
+- **GymMate** (`apps/gymmate`):
+  - `api` → `api.gymmatehub.com` / `api.gymmate.${BASE_DOMAIN}` (Spring Boot, 1G)
+  - `web` → `gymmatehub.com` / `www.gymmatehub.com` (React/nginx, 128M).
+    Image: `ghcr.io/gymmatehub/gymmate-frontend`. Source: `GymmateHub/frontend`.
+- **Vantroxia Labs** (`apps/vantroxialabs`):
+  - `web` → `vantroxialabs.com` / `www.vantroxialabs.com` (coming-soon, nginx, 64M).
+    Built from local Dockerfile.
 
 ## Fresh install steps
 
@@ -126,37 +133,64 @@ scoped user. Both are idempotent.
 
 - **Admin (IP-restricted via `admin-allowlist@file`)** on `vantroxialabs.com`:
   `traefik.`, `mq.`, `minio.`, `s3.` (S3 API is public), `logs.`
-- **AegisRemit:** `api.aegisremit.ng`, `erp.aegisremit.ng`
-- **GymMate:** `api.gymmate.vantroxialabs.com` (API) + `gymmate.vantroxialabs.com` (frontend)
-- Per-product subdomains as you add apps
+- **AegisRemit:** `aegisremit.ng`, `www.aegisremit.ng`, `api.aegisremit.ng`, `erp.aegisremit.ng`
+- **GymMate:** `gymmatehub.com`, `www.gymmatehub.com`, `api.gymmatehub.com`,
+  `api.gymmate.vantroxialabs.com` (legacy alias)
+- **Vantroxia Labs:** `vantroxialabs.com`, `www.vantroxialabs.com`
 
 > `s3.${BASE_DOMAIN}` is intentionally **public** (presigned URLs must be reachable); the MinIO
 > console `minio.` is admin-restricted.
 
 ## Memory budget (8 GB box)
 
-| Service                          | Limit  |
-|----------------------------------|--------|
-| Traefik                          | 128M   |
-| Postgres                         | 1G     |
-| Redis                            | 256M   |
-| RabbitMQ                         | 512M   |
-| MinIO                            | 512M   |
-| OpenObserve                      | 768M   |
-| OTEL Collector                   | 256M   |
-| AegisRemit (portal-api + erp-api)| 1G     |
-| GymMate (api)                    | 1G     |
-| **Subtotal (current fleet)**     | **~5.4G** |
-| Spring Boot template (each)      | +768M  |
+| Service                           | Limit  |
+|-----------------------------------|--------|
+| Traefik                           | 128M   |
+| Postgres                          | 1G     |
+| Redis                             | 256M   |
+| RabbitMQ                          | 512M   |
+| MinIO                             | 512M   |
+| OpenObserve                       | 768M   |
+| OTEL Collector                    | 256M   |
+| AegisRemit (portal + erp + admin) | 1.1G   |
+| GymMate (api + web)               | 1.1G   |
+| Vantroxia Labs (coming-soon)      | 64M    |
+| **Subtotal (current fleet)**      | **~5.7G** |
 
-~2.5 GB headroom for OS + page cache with the current fleet. Observability stays on-box via
+~2.3 GB headroom for OS + page cache with the current fleet. Observability stays on-box via
 OpenObserve; move to a dedicated telemetry VPS only when traffic justifies it.
 
-## CI/CD (repository_dispatch pattern)
+## CI/CD (Hub-and-Spoke Dispatch Architecture)
 
-Product repos build → push to GHCR → `repository_dispatch` to this repo → GitHub Action SSHes in →
-`cd /opt/vantroxia/apps/<product> && docker compose pull && docker compose up -d`.
-Deploy paths use `/opt/vantroxia/apps/<product>` (migrated from the old `/opt/aegisremit`).
+Deployments are automated using GitHub Actions `repository_dispatch` webhooks. Product repositories build and push images to GHCR, then notify this infra repository to pull and roll the services on the VPS.
+
+📖 **For full architecture diagrams, runbooks, and workflow specs, see the [Comprehensive Deployment Guide](file:///Users/godswilldavid/source/repos/vantroxia-vps/docs/deployment-guide.md).**
+
+### Quick Dispatch Reference
+
+| Source Repository | Trigger Branch | Dispatched `service` | Action on VPS |
+|---|---|---|---|
+| `GymmateHub/Backend` | `main` | `gymmate` | Pulls backend & restarts GymMate stack |
+| `GymmateHub/frontend` | `main` | `gymmate` | Pulls frontend & restarts GymMate stack |
+| `Vantroxia-Labs/remit` | `main` | `all-apis` | Runs EF Core DB migrations, updates Portal & ERP APIs |
+| `Vantroxia-Labs/admin` | `main` | `admin` | Pulls admin image & updates `aegisremit-admin` |
+
+### Manual Deployment Commands
+
+```bash
+# ── On-demand via GitHub Actions UI ──
+# Go to Actions -> Deploy -> "Run workflow" -> choose service (all, gymmate, all-apis, admin, etc.)
+
+# ── Direct CLI via SSH ──
+# GymMate stack
+ssh deploy@vantroxia "cd /opt/vantroxia/apps/gymmate && docker compose pull && docker compose up -d"
+
+# AegisRemit stack
+ssh deploy@vantroxia "cd /opt/vantroxia/apps/aegisremit && docker compose pull && docker compose up -d"
+
+# Vantroxia Labs landing page
+ssh deploy@vantroxia "cd /opt/vantroxia/apps/vantroxialabs && docker compose up -d --build"
+```
 
 ## Notes
 
