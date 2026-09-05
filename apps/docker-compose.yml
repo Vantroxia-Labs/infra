@@ -64,10 +64,11 @@ services:
       # Disable internal HTTPS enforcement (handled by Traefik)
       - Security__EnforceHttps=false
       - Security__BlockHttpRequests=false
-      # CORS — override first 3 entries of the appsettings.json array with production origins
+      # CORS — override entries of the appsettings.json array with production origins
       - Cors__AllowedOrigins__0=https://${DOMAIN}
       - Cors__AllowedOrigins__1=https://www.${DOMAIN}
       - Cors__AllowedOrigins__2=https://app.${DOMAIN}
+      - Cors__AllowedOrigins__3=https://api.${DOMAIN}
       # Observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://aegisremit-otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-portal-api
@@ -144,6 +145,7 @@ services:
       - Cors__AllowedOrigins__0=https://${DOMAIN}
       - Cors__AllowedOrigins__1=https://www.${DOMAIN}
       - Cors__AllowedOrigins__2=https://app.${DOMAIN}
+      - Cors__AllowedOrigins__3=https://api.${DOMAIN}
       # Observability
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://aegisremit-otel-collector:4317
       - OTEL_SERVICE_NAME=aegisremit-erp-api
