@@ -136,5 +136,5 @@ jobs:
               "image_tag": "${{ needs.docker.outputs.sha_tag || 'latest' }}",
               "triggered_by": "${{ github.repository }}",
               "commit_sha": "${{ github.sha }}",
-              "commit_message": "${{ github.event.head_commit.message }}"
+              "commit_message": ${{ toJson(github.event.head_commit.message) }}
             }
