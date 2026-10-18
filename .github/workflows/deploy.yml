@@ -175,7 +175,22 @@ jobs:
                 deploy_stack "apps/aegisremit"
                 ;;
               gymmate)
-                deploy_stack "apps/gymmate"
+                # Each GymMate repo builds its own image tag (its commit SHA). Pin and roll only
+                # the service whose repo triggered the deploy, so a deploy runs exactly the build
+                # it was triggered for instead of whichever build last pushed :latest.
+                case "${{ steps.target.outputs.triggered_by }}" in
+                  GymmateHub/Backend)
+                    export TAG_API="$TAG"
+                    deploy_service "api" "apps/gymmate"
+                    ;;
+                  GymmateHub/frontend)
+                    export TAG_WEB="$TAG"
+                    deploy_service "web" "apps/gymmate"
+                    ;;
+                  *)
+                    deploy_stack "apps/gymmate"
+                    ;;
+                esac
                 ;;
               vantroxialabs)
                 deploy_stack "apps/vantroxialabs"
