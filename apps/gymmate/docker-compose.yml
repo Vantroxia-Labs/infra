@@ -12,7 +12,8 @@ name: gymmate
 
 services:
   api:
-    image: ghcr.io/gymmatehub/gymmate-backend:${TAG:-latest}
+    # Pinned per deploy by the Deploy workflow (TAG_API = the Backend build that triggered it).
+    image: ghcr.io/gymmatehub/gymmate-backend:${TAG_API:-latest}
     container_name: gymmate-api
     restart: unless-stopped
     networks:
@@ -108,7 +109,8 @@ services:
   # Image built by GymmateHub/frontend CI → ghcr.io
   # ----------------------------------------------------------
   web:
-    image: ghcr.io/gymmatehub/gymmate-frontend:${TAG:-latest}
+    # Pinned per deploy by the Deploy workflow (TAG_WEB = the frontend build that triggered it).
+    image: ghcr.io/gymmatehub/gymmate-frontend:${TAG_WEB:-latest}
     container_name: gymmate-web
     restart: unless-stopped
     networks:
