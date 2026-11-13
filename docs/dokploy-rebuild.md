@@ -10,16 +10,20 @@ Files:
 
 ## 0. Before you wipe
 
-```sh
-# configs + secrets (Paystack/Monnify sandbox, SES, JWT keys)
-rsync -avm --include='*/' --include='*.yml' --include='*.yaml' --include='.env*' --exclude='*' \
-  root@207.180.197.64:/opt/vantroxia/ ./vantroxia-old/
+Dev environment: **no data is kept**. All databases, buckets and containers
+are wiped; apps re-bootstrap their schemas on first deploy (EF Core
+migrations, Spring JPA, etc.). Only secrets you can't regenerate matter.
 
-# database contents, if any staging data is worth keeping
-ssh root@207.180.197.64 'docker exec postgres sh -c "pg_dumpall -U \$POSTGRES_USER"' | gzip > vantroxia-old/pg_dumpall.sql.gz
+```sh
+# Pull the current .env files so you can paste them back into Dokploy as
+# per-app environment (Paystack/Monnify sandbox, SES, JWT keys, GHCR token).
+rsync -avm --include='*/' --include='.env*' --exclude='*' \
+  root@207.180.197.64:/opt/vantroxia/ ./vantroxia-old/
 ```
 
-Then **Create snapshot** in the Contabo panel as a safety net.
+Then **Create snapshot** in the Contabo panel as a rollback safety net
+(not for data recovery — for getting the old server back if the rebuild
+stalls).
 
 ## 1. Reinstall + firewall
 
@@ -49,19 +53,43 @@ Confirm `ssh godswill@207.180.197.64` + `sudo -v` works from a second terminal b
 
 ## 4. Services
 
+`shared` holds the reusable infra every dev service plugs into. Create it
+first so per-app projects can point at its service names on
+`dokploy-network`.
+
 | Project | Service | Type / image | Notes |
 |---|---|---|---|
-| shared | Postgres | Dokploy DB, `postgres:18` | match the old major so `pg_dumpall` restores cleanly; scheduled backups to R2 |
-| shared | Redis | Dokploy DB, `redis:7` | |
+| shared | Postgres | Dokploy DB, `postgres:18` | one DB + role per app; scheduled backups to R2 |
+| shared | Redis | Dokploy DB, `redis:7` | one logical DB (`0`, `1`, …) per app, or a prefix convention |
 | shared | RabbitMQ | app, `rabbitmq:4-management-alpine` | vhost per product |
-| aegisremit | portal-api, erp-api, admin | apps from GHCR | memory limits on each |
+| shared | OpenObserve | app, `openobserve/openobserve:latest` | logs + traces + metrics; apps push OTLP directly, no OTEL Collector |
+| aegisremit | portal-api, erp-api, admin | apps from GHCR | memory limits on each; `remit-migrator` runs first against cold DB |
 | gymmate | api, web | apps from GHCR | JVM: set `-XX:MaxRAMPercentage` + limit |
 | vantroxialabs | site | app from GHCR | |
 
-- **MinIO is gone** (Docker Hub images removed). Use a Cloudflare R2 bucket; only the S3 endpoint changes.
-  Self-hosted alternatives: Garage, SeaweedFS, RustFS.
-- **Monitoring:** Dokploy's built-in metrics/logs. Bring OpenObserve back only if you need traces;
-  apps can send OTLP straight to it (no separate OTEL Collector).
+- **Object storage:** Cloudflare R2 bucket per product (MinIO is gone —
+  Docker Hub images removed). Only the S3 endpoint changes in app config.
+  Self-hosted fallback: Garage, SeaweedFS, RustFS.
+- **Observability:** OpenObserve lives in `shared`; every app sends OTLP
+  logs/traces/metrics straight to it over `dokploy-network`. Dokploy's
+  built-in container metrics/logs stay on for the platform layer.
+
+### Cold-DB bootstrap (aegisremit)
+
+The shared Postgres is empty. Before `portal-api` / `erp-api` start on
+first deploy, `remit-migrator` must apply the schema. Two patterns:
+
+- **Separate Dokploy Application** for `remit-migrator` (image
+  `ghcr.io/vantroxia-labs/remit-migrator:<tag>`, command override runs the
+  EF Core bundle, no exposed ports). CI deploys it first and waits for
+  exit before deploying the APIs. Gives explicit, auditable runs.
+- **Pre-deploy command** on `portal-api` (Advanced → Pre-deploy) that
+  runs the migrator bundle. Simpler, but every portal-api deploy re-runs
+  migrations (idempotent, so safe — just noisy).
+
+Pick the separate-app pattern for clarity; the cold-start case already
+needs it and later deploys reuse the same flow. Spring (`gymmate api`)
+runs its own JPA migrations on boot — no separate step needed.
 
 ## 5. CI
 
