@@ -104,5 +104,14 @@ targets this repo.
 
 ## After cutover
 
-Delete `traefik/`, `infra/`, `apps/`, `scripts/fresh-install.sh` and
-`.github/workflows/deploy.yml` from this repo (kept until the new server is live, for reference).
+- Close port 3000 on both the Contabo firewall and UFW
+  (`sudo ufw delete allow 3000/tcp`) once `deploy.vantroxialabs.com`
+  resolves and HTTPS works end-to-end.
+- Shred the local `./vantroxia-old/` copy of the pre-wipe `.env` files
+  once every secret is pasted into Dokploy UI.
+- Tag the repo `dokploy-live-v1` so future rebuilds have a clean
+  reference point.
+
+The old SSH-era scaffolding (`traefik/`, `infra/`, `apps/`,
+`scripts/fresh-install.sh`, `.github/workflows/deploy.yml`) was removed
+in commit `<see git log>` once the Contabo reinstall was greenlit.
