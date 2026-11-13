@@ -1,0 +1,78 @@
+# Copy into each APP repo as .github/workflows/deploy-staging.yml
+# (it lives in ci-templates/ here so it doesn't run in the infra repo).
+#
+# Builds the image on GitHub's runners, pushes it to GHCR, then tells Dokploy to
+# redeploy. The VPS never builds anything; it only pulls the finished image.
+#
+# One-time setup per repo (Settings -> Secrets and variables -> Actions):
+#   Secrets:    DOKPLOY_URL      e.g. https://deploy.vantroxialabs.com
+#               DOKPLOY_API_KEY  Dokploy -> Settings -> Profile -> API/CLI -> Generate
+#   Variables:  DOKPLOY_APP_ID   the application's ID (visible in its Dokploy URL)
+#
+# One-time setup in Dokploy:
+#   Settings -> Registry: add ghcr.io with a GitHub token that has read:packages
+#   App -> General -> Provider: Docker, image ghcr.io/vantroxia-labs/<repo>:staging
+#
+# Repo with several images (e.g. SaaS.API + EInvoiceIntegrator.API)? Copy the build
+# step once per Dockerfile with `file:` and an image suffix, and the deploy step once
+# per Dokploy app ID.
+
+name: deploy-staging
+
+on:
+  push:
+    branches: [develop]        # your staging branch
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # GHCR rejects uppercase, and the org is "Vantroxia-Labs".
+      - name: Set image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.IMAGE }}:staging
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Frontends only: Vite bakes VITE_* in at build time, so pass them here.
+          # build-args: |
+          #   VITE_API_URL=${{ vars.VITE_API_URL }}
+
+      - name: Redeploy on Dokploy
+        env:
+          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          APP_ID: ${{ vars.DOKPLOY_APP_ID }}
+        run: |
+          curl -fsS -X POST "$DOKPLOY_URL/api/application.deploy" \
+            -H "accept: application/json" \
+            -H "x-api-key: $DOKPLOY_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"applicationId\": \"$APP_ID\"}"
+
